@@ -3,51 +3,44 @@ pragma solidity ^0.8.20;
 
 /**
  * @title KnowledgeGovernor
- * @dev DeFi风格治理：Governor + TimelockController（OZ4.9.6兼容）
- * 流程：propose -> vote -> queue(timelock) -> execute
+ * @dev 基于 OpenZeppelin Governor 的 DAO 合约
+ *
+ * 特点：
+ * - 投票权来自 NativeVotes（原生币质押）
+ * - 提案需要达到 proposalThreshold（防止垃圾提案）
+ * - 法定人数 quorumFraction（基于总质押）
+ * - 使用 Timelock 延迟执行
  */
 
-import "@openzeppelin/contracts/governance/IGovernor.sol";
 import "@openzeppelin/contracts/governance/Governor.sol";
-import "@openzeppelin/contracts/governance/TimelockController.sol";
-
 import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
+import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
 
 contract KnowledgeGovernor is
     Governor,
     GovernorSettings,
-    GovernorCountingSimple,
     GovernorVotes,
     GovernorVotesQuorumFraction,
+    GovernorCountingSimple,
     GovernorTimelockControl
 {
-    constructor(
-        IVotes _token,
-        TimelockController _timelock
-    )
+    constructor(IVotes _token, TimelockController _timelock)
         Governor("KnowledgeGovernor")
-        /**
-         * votingDelay = 1 block
-         * votingPeriod = 20 blocks
-         * proposalThreshold = 10e18 (10 KGT)
-         *
-         * 注意：proposalThreshold 用的是“投票权”，所以必须 delegate 才有效
-         */
-        GovernorSettings(1, 20, 10e18)
+        GovernorSettings(
+            1,          // votingDelay: 1 block
+            20,         // votingPeriod: 20 blocks
+            10 ether    // proposalThreshold: 10 原生币质押
+        )
         GovernorVotes(_token)
-        /**
-         * quorum = 总供应的 10%
-         * 真实 DeFi 常用 quorum 机制，防止少数人低参与度通过提案
-         */
-        GovernorVotesQuorumFraction(10)
+        GovernorVotesQuorumFraction(4) // 4% 法定人数
         GovernorTimelockControl(_timelock)
     {}
 
-    // ✅ OZ4：这些函数需要 override(IGovernor, GovernorSettings)
+    // -------- 必须 override 的函数（OZ 要求）--------
+
     function votingDelay()
         public
         view
@@ -75,10 +68,7 @@ contract KnowledgeGovernor is
         return super.proposalThreshold();
     }
 
-    // ✅ OZ4：quorum 来自 IGovernor 与 GovernorVotesQuorumFraction
-    function quorum(
-        uint256 blockNumber
-    )
+    function quorum(uint256 blockNumber)
         public
         view
         override(IGovernor, GovernorVotesQuorumFraction)
@@ -87,11 +77,7 @@ contract KnowledgeGovernor is
         return super.quorum(blockNumber);
     }
 
-    // ===== TimelockControl 必需 overrides =====
-
-    function state(
-        uint256 proposalId
-    )
+    function state(uint256 proposalId)
         public
         view
         override(Governor, GovernorTimelockControl)
@@ -106,7 +92,10 @@ contract KnowledgeGovernor is
         uint256[] memory values,
         bytes[] memory calldatas,
         bytes32 descriptionHash
-    ) internal override(Governor, GovernorTimelockControl) {
+    )
+        internal
+        override(Governor, GovernorTimelockControl)
+    {
         super._execute(proposalId, targets, values, calldatas, descriptionHash);
     }
 
@@ -115,7 +104,11 @@ contract KnowledgeGovernor is
         uint256[] memory values,
         bytes[] memory calldatas,
         bytes32 descriptionHash
-    ) internal override(Governor, GovernorTimelockControl) returns (uint256) {
+    )
+        internal
+        override(Governor, GovernorTimelockControl)
+        returns (uint256)
+    {
         return super._cancel(targets, values, calldatas, descriptionHash);
     }
 
@@ -128,9 +121,12 @@ contract KnowledgeGovernor is
         return super._executor();
     }
 
-    function supportsInterface(
-        bytes4 interfaceId
-    ) public view override(Governor, GovernorTimelockControl) returns (bool) {
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        override(Governor, GovernorTimelockControl)
+        returns (bool)
+    {
         return super.supportsInterface(interfaceId);
     }
 }

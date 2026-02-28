@@ -5,7 +5,11 @@
   "main": "index.js",
   "scripts": {
     "test": "hardhat test",
-    "compile": "hardhat compile"
+    "compile": "hardhat compile",
+    "clean": "hardhat clean",
+    "deploy:native": "hardhat run scripts/deploy-native.ts --network localhost",
+    "deploy:governance": "hardhat run scripts/deploy-governance.ts --network localhost",
+    "deploy:smoke": "hardhat run scripts/deploy-smoke.ts --network localhost"
   },
   "keywords": [],
   "author": "",
