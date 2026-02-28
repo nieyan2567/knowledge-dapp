@@ -1,0 +1,25 @@
+{
+  "name": "knowledge-dapp",
+  "version": "1.0.0",
+  "description": "Knowledge DAO smart contracts and governance tests",
+  "main": "index.js",
+  "scripts": {
+    "test": "hardhat test",
+    "compile": "hardhat compile"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^6.1.0",
+    "@typechain/ethers-v6": "^0.5.1",
+    "@typechain/hardhat": "^9.1.0",
+    "dotenv": "^17.3.1",
+    "hardhat": "^2.28.6",
+    "typechain": "^8.3.2"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^4.9.6",
+    "solc": "^0.8.20"
+  }
+}
