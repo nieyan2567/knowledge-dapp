@@ -30,9 +30,9 @@ contract KnowledgeGovernor is
     constructor(IVotes _token, TimelockController _timelock)
         Governor("KnowledgeGovernor")
         GovernorSettings(
-            1,          // votingDelay: 1 block
-            20,         // votingPeriod: 20 blocks
-            10 ether    // proposalThreshold: 10 原生币质押
+            5,          // votingDelay: 5 block 投票开始前的等待时间（防止“投票前质押”）
+            100,         // votingPeriod: 100 blocks 投票持续时间（约 20分钟，按链上出块速度调整）
+            10 ether    // proposalThreshold: 10 原生币质押 才能提交提案（防止垃圾提案）
         )
         GovernorVotes(_token)
         GovernorVotesQuorumFraction(4) // 4% 法定人数
