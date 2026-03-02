@@ -18,6 +18,7 @@ async function main() {
   const cooldownSeconds = 3600; // 1h（演示可改短）
   const activationBlocks = 10;  // 激活延迟（演示可改短）
 
+  console.log("📦 部署 NativeVotes...");
   const NativeVotes = await ethers.getContractFactory("NativeVotes");
   const nativeVotes = await NativeVotes.deploy(cooldownSeconds, activationBlocks);
   await nativeVotes.waitForDeployment();
@@ -25,13 +26,25 @@ async function main() {
   console.log("✅ NativeVotes:", nativeVotesAddress);
 
   // --- 2) KnowledgeContent ---
-  const KnowledgeContent = await ethers.getContractFactory("KnowledgeContent");
-  const content = await KnowledgeContent.deploy();
+  console.log("📦 部署 KnowledgeContent...");
+  const KnowledgeContentFactory = await ethers.getContractFactory("KnowledgeContent");
+  const content = await KnowledgeContentFactory.deploy();
   await content.waitForDeployment();
   const contentAddress = await content.getAddress();
   console.log("✅ KnowledgeContent:", contentAddress);
 
-  // --- 3) TimelockController ---
+  // --- 3) 部署 TreasuryNative (金库) ---
+  console.log("📦 部署 TreasuryNative...");
+  const epochDuration = 7 * 24 * 3600; // 7 天一个 epoch
+  const epochBudget = ethers.parseEther("100"); // 每个 epoch 预算 100 ETH（演示可改小）
+
+  const Treasury = await ethers.getContractFactory("TreasuryNative");
+  const treasury = await Treasury.deploy(epochDuration, epochBudget);
+  await treasury.waitForDeployment();
+  const treasuryAddress = await treasury.getAddress();
+  console.log("✅ TreasuryNative 部署成功:", treasuryAddress);
+
+  // --- 4) TimelockController ---
   // executors = address(0) => anyone can execute
   const Timelock = await ethers.getContractFactory("TimelockController");
   const minDelay = 60; // Besu 联盟链演示建议 60 秒
@@ -55,7 +68,6 @@ async function main() {
   console.log("Deployer is Timelock Admin?:", isTimelockAdmin);
 
   if (!isTimelockAdmin) {
-    // 这里直接 fail，避免你后面脚本3再炸
     throw new Error(
       [
         "❌ Timelock 部署后 deployer 不是 TIMELOCK_ADMIN_ROLE！",
@@ -65,14 +77,14 @@ async function main() {
     );
   }
 
-  // --- 4) KnowledgeGovernor ---
+  // --- 5) KnowledgeGovernor ---
   const Governor = await ethers.getContractFactory("KnowledgeGovernor");
   const governor = await Governor.deploy(nativeVotesAddress, timelockAddress);
   await governor.waitForDeployment();
   const governorAddress = await governor.getAddress();
   console.log("✅ KnowledgeGovernor:", governorAddress);
 
-  // --- 5) 写 deployments/<network>.json ---
+  // --- 6) 写 deployments/<network>.json ---
   const deploymentInfo: DeploymentInfo = {
     network: hre.network.name,
     chainId: Number(net.chainId),
@@ -81,6 +93,7 @@ async function main() {
     contracts: {
       NativeVotes: nativeVotesAddress,
       KnowledgeContent: contentAddress,
+      TreasuryNative: treasuryAddress,
       TimelockController: timelockAddress,
       KnowledgeGovernor: governorAddress,
     },

@@ -5,143 +5,139 @@ import {
   KnowledgeGovernor,
   NativeVotes,
   TimelockController,
+  TreasuryNative,
 } from "../typechain-types";
 import {
   KnowledgeContent__factory,
   KnowledgeGovernor__factory,
   NativeVotes__factory,
   TimelockController__factory,
+  TreasuryNative__factory,
 } from "../typechain-types";
 
 async function mineBlocks(n: number) {
-  for (let i = 0; i < n; i++) {
-    await ethers.provider.send("evm_mine", []);
-  }
+  for (let i = 0; i < n; i++) await ethers.provider.send("evm_mine", []);
 }
 
-describe("Governance Flow (Native coin staking votes, secure, TypeChain factory)", function () {
-  it("should update reward rules via propose -> vote -> queue -> execute (native votes)", async function () {
+async function increaseTime(seconds: number) {
+  await ethers.provider.send("evm_increaseTime", [seconds]);
+  await mineBlocks(1);
+}
+
+describe("Governance Flow (Treasury module, TypeChain factory)", function () {
+  it("should update reward rules AND treasury budget via propose -> vote -> queue -> execute", async function () {
     const [deployer, voter1, voter2] = await ethers.getSigners();
 
-    // NativeVotes：激活延迟=1块，冷却=1秒（测试加速）
-    const nativeVotesFactory = (await ethers.getContractFactory("NativeVotes")) as unknown as NativeVotes__factory;
-    const nativeVotes: NativeVotes = await nativeVotesFactory.deploy(1, 1);
+    // ---------------- Deploy NativeVotes ----------------
+    const nvFactory = (await ethers.getContractFactory("NativeVotes")) as unknown as NativeVotes__factory;
+    const nativeVotes: NativeVotes = await nvFactory.deploy(1, 1);
     await nativeVotes.waitForDeployment();
 
-    // KnowledgeContent：先由 deployer 初始化 antiSybil，再转 owner 给 timelock
-    const contentFactory = (await ethers.getContractFactory("KnowledgeContent")) as unknown as KnowledgeContent__factory;
-    const content: KnowledgeContent = await contentFactory.deploy();
+    // ---------------- Deploy Treasury ----------------
+    const tFactory = (await ethers.getContractFactory("TreasuryNative")) as unknown as TreasuryNative__factory;
+    const treasury: TreasuryNative = await tFactory.deploy(3600, ethers.parseEther("100"));
+    await treasury.waitForDeployment();
+
+    // ---------------- Deploy Content ----------------
+    const cFactory = (await ethers.getContractFactory("KnowledgeContent")) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await cFactory.deploy();
     await content.waitForDeployment();
 
-    // 给奖励池充值，便于后续演示
-    await (await deployer.sendTransaction({ to: await content.getAddress(), value: ethers.parseEther("5") })).wait();
-
-    // 绑定 antiSybil（之后投票才会通过）
+    // init: bind votes + treasury + spender
     await (await content.setAntiSybil(await nativeVotes.getAddress(), ethers.parseEther("1"))).wait();
+    await (await content.setTreasury(await treasury.getAddress())).wait();
+    await (await treasury.setSpender(await content.getAddress(), true)).wait();
 
-    // Timelock（minDelay=2秒）
-    const timelockFactory = (await ethers.getContractFactory("TimelockController")) as unknown as TimelockController__factory;
+    // ---------------- Deploy Timelock ----------------
+    const tlFactory = (await ethers.getContractFactory("TimelockController")) as unknown as TimelockController__factory;
     const minDelay = 2;
-    const timelock: TimelockController = await timelockFactory.deploy(
+    const timelock: TimelockController = await tlFactory.deploy(
       minDelay,
-      [deployer.address],
-      [ethers.ZeroAddress],
-      deployer.address
+      [deployer.address],     // proposers (init)
+      [ethers.ZeroAddress],   // executors open
+      deployer.address        // admin (init)
     );
     await timelock.waitForDeployment();
 
-    // Governor
-    const governorFactory = (await ethers.getContractFactory("KnowledgeGovernor")) as unknown as KnowledgeGovernor__factory;
-    const governor: KnowledgeGovernor = await governorFactory.deploy(
-      await nativeVotes.getAddress(),
-      await timelock.getAddress()
-    );
+    // ---------------- Deploy Governor ----------------
+    const gFactory = (await ethers.getContractFactory("KnowledgeGovernor")) as unknown as KnowledgeGovernor__factory;
+    const governor: KnowledgeGovernor = await gFactory.deploy(await nativeVotes.getAddress(), await timelock.getAddress());
     await governor.waitForDeployment();
 
-    // Timelock proposer -> Governor
+    // ---------------- Handover ownership to timelock ----------------
+    await (await content.transferOwnership(await timelock.getAddress())).wait();
+    await (await treasury.transferOwnership(await timelock.getAddress())).wait();
+
+    // role: proposer -> governor, revoke deployer
     const PROPOSER_ROLE = await timelock.PROPOSER_ROLE();
     await (await timelock.grantRole(PROPOSER_ROLE, await governor.getAddress())).wait();
     await (await timelock.revokeRole(PROPOSER_ROLE, deployer.address)).wait();
 
-    // 把 content owner 交给 timelock（治理执行才有权限）
-    await (await content.transferOwnership(await timelock.getAddress())).wait();
-
-    // voter1/voter2 质押并激活投票权（满足 proposalThreshold/quorum）
-    // proposalThreshold=10 ether（Governor里写的），所以 voter1 至少激活 10
+    // ---------------- Setup voting power ----------------
+    // voter1: 20, voter2: 10
     await (await nativeVotes.connect(voter1).deposit({ value: ethers.parseEther("20") })).wait();
     await (await nativeVotes.connect(voter2).deposit({ value: ethers.parseEther("10") })).wait();
     await mineBlocks(1);
     await (await nativeVotes.connect(voter1).activate()).wait();
     await (await nativeVotes.connect(voter2).activate()).wait();
 
-    // 显式 delegate（习惯一致；默认也会委托给自己）
+    // delegate to self (确保 governor 读取投票权时生效)
     await (await nativeVotes.connect(voter1).delegate(voter1.address)).wait();
     await (await nativeVotes.connect(voter2).delegate(voter2.address)).wait();
-
     await mineBlocks(1);
 
-    // 提案：修改奖励规则（必须在 cap 内）
-    const newMinVotes = 20n;
-    const newRewardPerVote = 2n * 10n ** 15n; // 0.002/票（<= 1 ether cap）
+    // =====================================================
+    // Proposal: 1) Content.setRewardRules(5, 0.002 ether)
+    //           2) Treasury.setBudget(3600, 200 ether)
+    // =====================================================
+    const newMinVotes = 5n;
+    const newRewardPerVote = ethers.parseEther("0.002"); // 0.002 / vote
 
-    const calldata = content.interface.encodeFunctionData("setRewardRules", [
-      newMinVotes,
-      newRewardPerVote,
-    ]);
+    const newEpochDuration = 3600n;
+    const newEpochBudget = ethers.parseEther("200");
 
-    const description = "Proposal: update reward rules (secure native)";
+    const calldata1 = content.interface.encodeFunctionData("setRewardRules", [newMinVotes, newRewardPerVote]);
+    const calldata2 = treasury.interface.encodeFunctionData("setBudget", [newEpochDuration, newEpochBudget]);
+
+    const targets = [await content.getAddress(), await treasury.getAddress()];
+    const values = [0, 0];
+    const calldatas = [calldata1, calldata2];
+
+    const description = "Proposal: update reward rules + treasury budget";
     const descriptionHash = ethers.id(description);
 
-    // propose（发起人必须达到 proposalThreshold）
-    await (await governor.connect(voter1).propose(
-      [await content.getAddress()],
-      [0],
-      [calldata],
-      description
-    )).wait();
+    // propose（从 voter1 发起）
+    await (await governor.connect(voter1).propose(targets, values, calldatas, description)).wait();
 
-    // 用 hashProposal 计算 proposalId（最稳，不依赖事件）
-    const proposalId = await governor.hashProposal(
-      [await content.getAddress()],
-      [0],
-      [calldata],
-      descriptionHash
-    );
+    const proposalId = await governor.hashProposal(targets, values, calldatas, descriptionHash);
+    expect(proposalId).to.not.equal(0n);
 
-    // 等 votingDelay
-    const votingDelay = await governor.votingDelay();
-    await mineBlocks(Number(votingDelay));
+    // votingDelay
+    const vDelay = Number(await governor.votingDelay());
+    await mineBlocks(vDelay + 1);
 
-    // 投票 For=1
+    // vote For
     await (await governor.connect(voter1).castVote(proposalId, 1)).wait();
     await (await governor.connect(voter2).castVote(proposalId, 1)).wait();
 
-    // 等 votingPeriod 结束
-    const votingPeriod = await governor.votingPeriod();
-    await mineBlocks(Number(votingPeriod));
+    // votingPeriod
+    const vPeriod = Number(await governor.votingPeriod());
+    await mineBlocks(vPeriod + 1);
 
     // queue
-    await (await governor.queue(
-      [await content.getAddress()],
-      [0],
-      [calldata],
-      descriptionHash
-    )).wait();
+    await (await governor.queue(targets, values, calldatas, descriptionHash)).wait();
 
-    // 等 timelock delay
-    await ethers.provider.send("evm_increaseTime", [minDelay + 1]);
-    await mineBlocks(1);
+    // wait timelock
+    await increaseTime(minDelay + 1);
 
     // execute
-    await (await governor.execute(
-      [await content.getAddress()],
-      [0],
-      [calldata],
-      descriptionHash
-    )).wait();
+    await (await governor.execute(targets, values, calldatas, descriptionHash)).wait();
 
-    // 断言更新成功
+    // verify updates
     expect(await content.minVotesToReward()).to.equal(newMinVotes);
     expect(await content.rewardPerVote()).to.equal(newRewardPerVote);
+
+    expect(await treasury.epochDuration()).to.equal(newEpochDuration);
+    expect(await treasury.epochBudget()).to.equal(newEpochBudget);
   });
 });

@@ -9,7 +9,7 @@ async function mineBlocks(n: number) {
   }
 }
 
-describe("NativeVotes (secure)", function () {
+describe("NativeVotes", function () {
   it("Should increase voting power only after activate()", async function () {
     const [user] = await ethers.getSigners();
 

@@ -7,6 +7,7 @@ export interface DeploymentInfo {
   contracts: {
     NativeVotes: string;
     KnowledgeContent: string;
+    TreasuryNative: string;
     TimelockController: string;
     KnowledgeGovernor: string;
   };
