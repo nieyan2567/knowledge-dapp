@@ -7,9 +7,10 @@
     "test": "hardhat test",
     "compile": "hardhat compile",
     "clean": "hardhat clean",
-    "deploy:native": "hardhat run scripts/deploy-native.ts --network consortium",
-    "deploy:governance": "hardhat run scripts/deploy-governance.ts --network consortium",
-    "deploy:smoke": "hardhat run scripts/deploy-smoke.ts --network consortium"
+    "local_1": "hardhat run scripts/1_deploy_contracts.ts --network localhost",
+    "local_2": "hardhat run scripts/2_initialize_content.ts --network localhost",
+    "local_3": "hardhat run scripts/3_handover_ownership.ts --network localhost",
+    "local_4": "hardhat run scripts/4_verify_system.ts --network localhost"
   },
   "keywords": [],
   "author": "",
