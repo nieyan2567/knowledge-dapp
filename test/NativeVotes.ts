@@ -63,4 +63,47 @@ describe("NativeVotes", function () {
     await (await nativeVotes.connect(user).withdraw(ethers.parseEther("2"))).wait();
     expect(await nativeVotes.pendingWithdraw(user.address)).to.equal(0n);
   });
+  
+  it("Should revert when activating twice", async function () {
+    const [user] = await ethers.getSigners();
+    const factory = (await ethers.getContractFactory("NativeVotes")) as unknown as NativeVotes__factory;
+    const nv = await factory.deploy(1, 1);
+    await nv.waitForDeployment();
+
+    await (await nv.connect(user).deposit({ value: ethers.parseEther("1") })).wait();
+    await mineBlocks(1);
+    await (await nv.connect(user).activate()).wait();
+
+    // 再次激活应该失败 (覆盖 activate 中的 require 检查)
+    await expect(nv.connect(user).activate()).to.be.revertedWith("no pending");
+  });
+
+  it("Should revert when requesting withdraw with zero balance", async function () {
+    const [user] = await ethers.getSigners();
+    const factory = (await ethers.getContractFactory("NativeVotes")) as unknown as NativeVotes__factory;
+    const nv = await factory.deploy(1, 1);
+    await nv.waitForDeployment();
+
+    // 没有存款直接请求取款
+    await expect(nv.connect(user).requestWithdraw(ethers.parseEther("1"))).to.be.reverted;
+  });
+
+  it("Should revert when withdrawing more than pending", async function () {
+    const [user] = await ethers.getSigners();
+    const factory = (await ethers.getContractFactory("NativeVotes")) as unknown as NativeVotes__factory;
+    const nv = await factory.deploy(1, 1);
+    await nv.waitForDeployment();
+
+    await (await nv.connect(user).deposit({ value: ethers.parseEther("2") })).wait();
+    await mineBlocks(1);
+    await (await nv.connect(user).activate()).wait();
+    
+    // 只请求提取 1
+    await (await nv.connect(user).requestWithdraw(ethers.parseEther("1"))).wait();
+    await ethers.provider.send("evm_increaseTime", [2]);
+    await mineBlocks(1);
+
+    // 尝试提取 2 (超过 pending)
+    await expect(nv.connect(user).withdraw(ethers.parseEther("2"))).to.be.reverted;
+  });
 });
