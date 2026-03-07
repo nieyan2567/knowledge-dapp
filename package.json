@@ -10,7 +10,8 @@
     "local_1": "hardhat run scripts/1_deploy_contracts.ts --network localhost",
     "local_2": "hardhat run scripts/2_initialize_system.ts --network localhost",
     "local_3": "hardhat run scripts/3_handover_ownership.ts --network localhost",
-    "local_4": "hardhat run scripts/4_verify_system.ts --network localhost"
+    "local_4": "hardhat run scripts/4_verify_system.ts --network localhost",
+    "copy": "hardhat run scripts/export_frontend.ts"
   },
   "keywords": [],
   "author": "",
