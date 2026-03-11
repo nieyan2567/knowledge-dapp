@@ -33,13 +33,8 @@ function copyDeployment() {
   if (!fs.existsSync(src)) {
     throw new Error(`❌ deployment.json 不存在：${src}`);
   }
-  
-  const deployment = JSON.parse(fs.readFileSync(src, "utf8"));
-
-  delete deployment.timestamp;
-
-  fs.writeFileSync(dst, JSON.stringify(deployment, null, 2), "utf8");
-  console.log("✅ deployment.json 已复制到前端（timestamp 已移除）");
+  fs.copyFileSync(src, dst);
+  console.log("✅ deployment.json 已复制到前端");
 }
 
 function copyLocalAbi(contractName: string) {
