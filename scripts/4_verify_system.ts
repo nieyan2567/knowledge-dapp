@@ -5,6 +5,7 @@ import {
   TimelockController,
   KnowledgeGovernor,
   NativeVotes,
+  RevenueVault,
   TreasuryNative,
 } from "../typechain-types";
 
@@ -41,6 +42,7 @@ async function main() {
   await assertHasCode("NativeVotes", info.contracts.NativeVotes);
   await assertHasCode("KnowledgeContent", info.contracts.KnowledgeContent);
   await assertHasCode("TreasuryNative", info.contracts.TreasuryNative);
+  await assertHasCode("RevenueVault", info.contracts.RevenueVault);
   await assertHasCode("TimelockController", info.contracts.TimelockController);
   await assertHasCode("KnowledgeGovernor", info.contracts.KnowledgeGovernor);
 
@@ -50,6 +52,8 @@ async function main() {
     .attach(info.contracts.KnowledgeContent)) as KnowledgeContent;
   const treasury = (await (await ethers.getContractFactory("TreasuryNative"))
     .attach(info.contracts.TreasuryNative)) as TreasuryNative;
+  const revenueVault = (await (await ethers.getContractFactory("RevenueVault"))
+    .attach(info.contracts.RevenueVault)) as RevenueVault;
   const timelock = (await (await ethers.getContractFactory("TimelockController"))
     .attach(info.contracts.TimelockController)) as TimelockController;
   const governor = (await (await ethers.getContractFactory("KnowledgeGovernor"))
@@ -63,6 +67,8 @@ async function main() {
   console.log("   KnowledgeContent.contentVersionCount():", hasFunction(content, "contentVersionCount"));
   console.log("   KnowledgeContent.getContentVersion():", hasFunction(content, "getContentVersion"));
   console.log("   TreasuryNative.totalPendingRewards():", hasFunction(treasury, "totalPendingRewards"));
+  console.log("   RevenueVault.needsRefill():", hasFunction(revenueVault, "needsRefill"));
+  console.log("   RevenueVault.refillTreasuryIfNeeded():", hasFunction(revenueVault, "refillTreasuryIfNeeded"));
   console.log("   Governor.timelock():", await governor.timelock());
   console.log("   Governor.token():", await governor.token());
 
@@ -134,6 +140,34 @@ async function main() {
   console.log("   PendingRewards(deployer):", ethers.formatEther(pendingDeployer), "KC");
   console.log("   Balance covers pending rewards?:", treasuryCoversPending);
 
+  console.log("\nRevenueVault state");
+  const revenueVaultOwner = await revenueVault.owner();
+  const revenueVaultBal = await ethers.provider.getBalance(info.contracts.RevenueVault);
+  const revenueVaultPaused = await revenueVault.paused();
+  const revenueVaultTreasury = await revenueVault.treasury();
+  const refillThreshold = await revenueVault.refillThreshold();
+  const targetTreasuryBalance = await revenueVault.targetTreasuryBalance();
+  const minRefillAmount = await revenueVault.minRefillAmount();
+  const refillCooldown = await revenueVault.refillCooldown();
+  const lastRefillAt = await revenueVault.lastRefillAt();
+  const autoRefillEnabled = await revenueVault.autoRefillEnabled();
+  const needsRefill = await revenueVault.needsRefill();
+  const maxRefillAmount = await revenueVault.maxRefillAmount();
+
+  console.log("   Address:", info.contracts.RevenueVault);
+  console.log("   Owner:", revenueVaultOwner);
+  console.log("   Paused:", revenueVaultPaused);
+  console.log("   Treasury(bound):", revenueVaultTreasury);
+  console.log("   Balance:", ethers.formatEther(revenueVaultBal), "KC");
+  console.log("   RefillThreshold:", ethers.formatEther(refillThreshold), "KC");
+  console.log("   TargetTreasuryBalance:", ethers.formatEther(targetTreasuryBalance), "KC");
+  console.log("   MinRefillAmount:", ethers.formatEther(minRefillAmount), "KC");
+  console.log("   RefillCooldown:", refillCooldown.toString(), "seconds");
+  console.log("   LastRefillAt:", lastRefillAt.toString());
+  console.log("   AutoRefillEnabled:", autoRefillEnabled);
+  console.log("   NeedsRefill:", needsRefill);
+  console.log("   MaxRefillAmount:", ethers.formatEther(maxRefillAmount), "KC");
+
   console.log("\nTimelock state");
   const PROPOSER_ROLE = await timelock.PROPOSER_ROLE();
   const EXECUTOR_ROLE = await timelock.EXECUTOR_ROLE();
@@ -173,12 +207,19 @@ async function main() {
   console.log("\nSafety summary");
   const contentOwnerIsTimelock = eqAddr(contentOwner, info.contracts.TimelockController);
   const treasuryOwnerIsTimelock = eqAddr(treasuryOwner, info.contracts.TimelockController);
+  const revenueVaultOwnerIsTimelock = eqAddr(revenueVaultOwner, info.contracts.TimelockController);
   const contentTreasuryIsTreasury = eqAddr(contentTreasury, info.contracts.TreasuryNative);
+  const revenueVaultTreasuryIsTreasury = eqAddr(
+    revenueVaultTreasury,
+    info.contracts.TreasuryNative
+  );
   const govTimelockOk = eqAddr(govTimelock, info.contracts.TimelockController);
 
   console.log("   Content owner == Timelock:", contentOwnerIsTimelock);
   console.log("   Treasury owner == Timelock:", treasuryOwnerIsTimelock);
+  console.log("   RevenueVault owner == Timelock:", revenueVaultOwnerIsTimelock);
   console.log("   Content.treasury == TreasuryNative:", contentTreasuryIsTreasury);
+  console.log("   RevenueVault.treasury == TreasuryNative:", revenueVaultTreasuryIsTreasury);
   console.log("   Treasury.spender(Content) == true:", spenderOk);
   console.log("   Governor.timelock == TimelockController:", govTimelockOk);
   console.log("   Treasury balance >= reserved rewards:", treasuryCoversPending);
@@ -189,8 +230,14 @@ async function main() {
   if (!treasuryOwnerIsTimelock) {
     console.log("   WARN Treasury owner is not Timelock.");
   }
+  if (!revenueVaultOwnerIsTimelock) {
+    console.log("   WARN RevenueVault owner is not Timelock.");
+  }
   if (!contentTreasuryIsTreasury) {
     console.log("   WARN KnowledgeContent is bound to the wrong Treasury.");
+  }
+  if (!revenueVaultTreasuryIsTreasury) {
+    console.log("   WARN RevenueVault is bound to the wrong Treasury.");
   }
   if (!spenderOk) {
     console.log("   WARN Treasury has not authorized KnowledgeContent as spender.");

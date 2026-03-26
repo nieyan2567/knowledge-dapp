@@ -44,7 +44,26 @@ async function main() {
   const treasuryAddress = await treasury.getAddress();
   console.log("✅ TreasuryNative 部署成功:", treasuryAddress);
 
-  // --- 4) TimelockController ---
+  // --- 4) RevenueVault ---
+  console.log("📦 部署 RevenueVault...");
+  const refillThreshold = ethers.parseEther("2");
+  const targetTreasuryBalance = ethers.parseEther("5");
+  const minRefillAmount = ethers.parseEther("1");
+  const refillCooldown = 3600;
+
+  const RevenueVault = await ethers.getContractFactory("RevenueVault");
+  const revenueVault = await RevenueVault.deploy(
+    treasuryAddress,
+    refillThreshold,
+    targetTreasuryBalance,
+    minRefillAmount,
+    refillCooldown
+  );
+  await revenueVault.waitForDeployment();
+  const revenueVaultAddress = await revenueVault.getAddress();
+  console.log("✅ RevenueVault:", revenueVaultAddress);
+
+  // --- 5) TimelockController ---
   // executors = address(0) => anyone can execute
   const Timelock = await ethers.getContractFactory("TimelockController");
   const minDelay = 60; // Besu 联盟链演示建议 60 秒
@@ -77,14 +96,14 @@ async function main() {
     );
   }
 
-  // --- 5) KnowledgeGovernor ---
+  // --- 6) KnowledgeGovernor ---
   const Governor = await ethers.getContractFactory("KnowledgeGovernor");
   const governor = await Governor.deploy(nativeVotesAddress, timelockAddress);
   await governor.waitForDeployment();
   const governorAddress = await governor.getAddress();
   console.log("✅ KnowledgeGovernor:", governorAddress);
 
-  // --- 6) 写 deployments/<network>.json ---
+  // --- 7) 写 deployments/<network>.json ---
   const deploymentInfo: DeploymentInfo = {
     network: hre.network.name,
     chainId: Number(net.chainId),
@@ -94,6 +113,7 @@ async function main() {
       NativeVotes: nativeVotesAddress,
       KnowledgeContent: contentAddress,
       TreasuryNative: treasuryAddress,
+      RevenueVault: revenueVaultAddress,
       TimelockController: timelockAddress,
       KnowledgeGovernor: governorAddress,
     },

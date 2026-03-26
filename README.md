@@ -1,6 +1,6 @@
 # Knowledge DApp Contracts
 
-This repository contains the blockchain layer for the Knowledge DApp. It includes the staking, content, treasury, governor, and timelock contracts, along with deployment and verification scripts.
+This repository contains the blockchain layer for the Knowledge DApp. It includes the staking, content, treasury, revenue vault, governor, and timelock contracts, along with deployment and verification scripts.
 
 ## Repository Scope
 
@@ -23,6 +23,7 @@ Frontend code is maintained separately in the sibling project `../knowledge-dapp
 - `NativeVotes`: users stake KC, wait for activation, and obtain governance voting power.
 - `KnowledgeContent`: authors register content, update content metadata with on-chain version history, delete content by soft delete, and accept votes.
 - `TreasuryNative`: holds KC rewards, reserves pending rewards, and lets beneficiaries claim them.
+- `RevenueVault`: collects protocol income or block rewards and refills `TreasuryNative` when treasury liquidity falls below a threshold.
 - `KnowledgeGovernor`: DAO proposal and voting entrypoint.
 - `TimelockController`: delayed execution and final owner of governance-controlled contracts.
 
@@ -46,7 +47,13 @@ Current safety rules:
 
 ## Treasury Model
 
-The treasury uses two separate constraints:
+The reward funding model uses `RevenueVault -> TreasuryNative`.
+
+- `RevenueVault` accumulates revenue or QBFT block rewards
+- `RevenueVault` can refill `TreasuryNative` up to a target balance
+- `TreasuryNative` still enforces reward reservation and epoch budget limits
+
+`TreasuryNative` uses two separate constraints:
 
 - actual treasury balance: how much KC the contract currently holds
 - epoch budget: the maximum reward amount that may be accrued during one epoch
@@ -56,13 +63,17 @@ Current deployment defaults:
 - initial treasury funding target: `5 KC`
 - treasury epoch duration: `7 days`
 - treasury epoch budget: `100 KC`
+- default revenue vault refill threshold: `2 KC`
+- default revenue vault target treasury balance: `5 KC`
+- default revenue vault minimum refill size: `1 KC`
+- default revenue vault refill cooldown: `1 hour`
 
 Effective reward capacity is the smaller of:
 
 - remaining treasury balance
 - remaining epoch budget
 
-The treasury does not auto-refill. If funds run low, new reward accruals revert until someone funds the treasury again.
+`RevenueVault` does not wake up by itself. It refills treasury when `refillTreasuryIfNeeded()` is called through a user transaction, keeper, or another transaction flow.
 
 ## Prerequisites
 
@@ -113,10 +124,10 @@ npm run local_4
 
 Meaning of each step:
 
-1. `local_1`: deploy `NativeVotes`, `KnowledgeContent`, `TreasuryNative`, `TimelockController`, `KnowledgeGovernor`
+1. `local_1`: deploy `NativeVotes`, `KnowledgeContent`, `TreasuryNative`, `RevenueVault`, `TimelockController`, `KnowledgeGovernor`
 2. `local_2`: fund treasury to the target balance, bind content to treasury and anti-sybil voting source, authorize content as treasury spender
-3. `local_3`: transfer contract ownership to `TimelockController` and finalize governance handover
-4. `local_4`: verify deployment integrity, role configuration, treasury reserve coverage, and content version history surface
+3. `local_3`: transfer contract ownership to `TimelockController` and finalize governance handover for `KnowledgeContent`, `TreasuryNative`, and `RevenueVault`
+4. `local_4`: verify deployment integrity, role configuration, treasury reserve coverage, revenue vault refill policy, and content version history surface
 
 Deployment metadata is stored in:
 
@@ -184,3 +195,4 @@ Current coverage includes:
 - `KnowledgeContent` keeps current metadata in `contents(contentId)` and historical metadata in `getContentVersion(...)`.
 - `deleteContent(...)` is a business-level delete, not physical deletion of chain history.
 - `TreasuryNative` tracks `totalPendingRewards` to prevent over-reserving rewards beyond available KC.
+- `RevenueVault` is designed to be used as the QBFT `miningbeneficiary` if you want protocol-level block rewards to replenish treasury liquidity.
