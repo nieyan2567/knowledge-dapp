@@ -35,6 +35,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         uint256 timestamp;
 
         bool rewardAccrued;
+        bool deleted;
     }
 
     uint256 public contentCount;
@@ -62,6 +63,20 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     );
 
     event Voted(uint256 indexed contentId, address indexed voter);
+
+    event ContentUpdated(
+        uint256 indexed id,
+        address indexed author,
+        string ipfsHash,
+        string title,
+        string description
+    );
+
+    event ContentDeleted(
+        uint256 indexed id,
+        address indexed operator,
+        address indexed author
+    );
 
     event RewardRulesUpdated(uint256 minVotesToReward, uint256 rewardPerVote);
 
@@ -167,7 +182,8 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
             timestamp: block.timestamp,
 
-            rewardAccrued: false
+            rewardAccrued: false,
+            deleted: false
         });
 
         emit ContentRegistered(
@@ -179,9 +195,65 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         );
     }
 
+    function updateContent(
+        uint256 contentId,
+        string memory _ipfsHash,
+        string memory _title,
+        string memory _description
+    ) external whenNotPaused {
+
+        require(contentId > 0 && contentId <= contentCount, "bad id");
+        require(bytes(_ipfsHash).length > 0, "CID empty");
+        require(bytes(_title).length > 0, "title empty");
+
+        Content storage c = contents[contentId];
+
+        require(c.author == msg.sender, "not author");
+        require(!c.deleted, "content deleted");
+        require(c.voteCount == 0, "already voted");
+        require(!c.rewardAccrued, "reward already accrued");
+
+        c.ipfsHash = _ipfsHash;
+        c.title = _title;
+        c.description = _description;
+
+        emit ContentUpdated(
+            contentId,
+            msg.sender,
+            _ipfsHash,
+            _title,
+            _description
+        );
+    }
+
+    function deleteContent(uint256 contentId) external whenNotPaused {
+
+        require(contentId > 0 && contentId <= contentCount, "bad id");
+
+        Content storage c = contents[contentId];
+
+        require(!c.deleted, "already deleted");
+
+        bool isAuthor = c.author == msg.sender;
+        bool isOwnerCaller = owner() == msg.sender;
+
+        require(isAuthor || isOwnerCaller, "not authorized");
+
+        if (isAuthor) {
+            require(c.voteCount == 0, "already voted");
+            require(!c.rewardAccrued, "reward already accrued");
+        }
+
+        c.deleted = true;
+
+        emit ContentDeleted(contentId, msg.sender, c.author);
+    }
+
     function vote(uint256 contentId) external whenNotPaused {
 
         require(contentId > 0 && contentId <= contentCount, "bad id");
+
+        require(!contents[contentId].deleted, "content deleted");
 
         require(!hasVoted[msg.sender][contentId], "Already voted");
 
@@ -209,6 +281,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         Content storage c = contents[contentId];
 
         require(contentId > 0 && contentId <= contentCount, "bad id");
+        require(!c.deleted, "content deleted");
 
         require(c.voteCount >= minVotesToReward, "not enough votes");
 

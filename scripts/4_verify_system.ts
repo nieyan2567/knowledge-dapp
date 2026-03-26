@@ -11,186 +11,194 @@ import {
 async function assertHasCode(label: string, addr: string) {
   const code = await ethers.provider.getCode(addr);
   if (!code || code === "0x") {
-    throw new Error(`❌ ${label} 地址没有合约代码：${addr}（可能未部署/链已重置/地址错）`);
+    throw new Error(
+      `${label} has no contract code at ${addr} (not deployed, chain reset, or wrong address)`
+    );
   }
-  console.log(`   ✅ ${label} code ok (len=${code.length})`);
+  console.log(`   OK ${label} code present (len=${code.length})`);
 }
 
 function eqAddr(a: string, b: string) {
   return a.toLowerCase() === b.toLowerCase();
 }
 
+function hasFunction(contract: { interface: { getFunction(name: string): unknown } }, name: string) {
+  try {
+    contract.interface.getFunction(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
-  console.log("🔍 正在验证系统状态（Treasury 模块化版）...\n");
+  console.log("Checking system state for the KC governance stack...\n");
 
   const info = await loadDeployment();
   const [deployer] = await ethers.getSigners();
 
-  // =========================================
-  // 0️⃣ 部署完整性检查
-  // =========================================
-  console.log("🧩 部署完整性检查:");
-
+  console.log("Deployment integrity");
   await assertHasCode("NativeVotes", info.contracts.NativeVotes);
   await assertHasCode("KnowledgeContent", info.contracts.KnowledgeContent);
-  await assertHasCode("TreasuryNative", info.contracts.TreasuryNative); // ✅ 新增
+  await assertHasCode("TreasuryNative", info.contracts.TreasuryNative);
   await assertHasCode("TimelockController", info.contracts.TimelockController);
   await assertHasCode("KnowledgeGovernor", info.contracts.KnowledgeGovernor);
 
-  // attach（TypeChain）
   const nativeVotes = (await (await ethers.getContractFactory("NativeVotes"))
     .attach(info.contracts.NativeVotes)) as NativeVotes;
-
   const content = (await (await ethers.getContractFactory("KnowledgeContent"))
     .attach(info.contracts.KnowledgeContent)) as KnowledgeContent;
-
   const treasury = (await (await ethers.getContractFactory("TreasuryNative"))
     .attach(info.contracts.TreasuryNative)) as TreasuryNative;
-
   const timelock = (await (await ethers.getContractFactory("TimelockController"))
     .attach(info.contracts.TimelockController)) as TimelockController;
-
   const governor = (await (await ethers.getContractFactory("KnowledgeGovernor"))
     .attach(info.contracts.KnowledgeGovernor)) as KnowledgeGovernor;
 
-  // 关键只读函数验证（防止地址错配/ABI错配）
-  console.log("   🔎 合约类型验证:");
+  console.log("\nABI surface");
+  console.log("   NativeVotes.cooldownSeconds():", (await nativeVotes.cooldownSeconds()).toString());
+  console.log("   NativeVotes.activationBlocks():", (await nativeVotes.activationBlocks()).toString());
+  console.log("   KnowledgeContent.updateContent():", hasFunction(content, "updateContent"));
+  console.log("   KnowledgeContent.deleteContent():", hasFunction(content, "deleteContent"));
+  console.log("   TreasuryNative.totalPendingRewards():", hasFunction(treasury, "totalPendingRewards"));
+  console.log("   Governor.timelock():", await governor.timelock());
+  console.log("   Governor.token():", await governor.token());
 
-  console.log("      NativeVotes.cooldownSeconds():", (await nativeVotes.cooldownSeconds()).toString());
-  console.log("      NativeVotes.activationBlocks():", (await nativeVotes.activationBlocks()).toString());
-
-  // 下面这些调用如果 ABI/地址不对会直接 throw
-  await content.owner();
-  await content.votesContract();
-  await content.minStakeToVote();
-  await content.treasury(); // ✅ 新增：content 已有 treasury()
-
-  await treasury.epochBudget();
-  await treasury.epochDuration();
-  await treasury.epochSpent();
-
-  await timelock.getMinDelay();
-  await governor.timelock();
-  await governor.token();
-
-  console.log("   ✅ ABI 调用验证通过\n");
-
-  // =========================================
-  // 1️⃣ KnowledgeContent 状态
-  // =========================================
-  console.log("📦 KnowledgeContent 状态:");
+  console.log("\nKnowledgeContent state");
   const contentOwner = await content.owner();
   const votesContract = await content.votesContract();
   const minStakeToVote = await content.minStakeToVote();
+  const minVotesToReward = await content.minVotesToReward();
+  const rewardPerVote = await content.rewardPerVote();
   const contentTreasury = await content.treasury();
+  const contentPaused = await content.paused();
+  const contentCount = await content.contentCount();
+  const contentBal = await ethers.provider.getBalance(info.contracts.KnowledgeContent);
 
   console.log("   Address:", info.contracts.KnowledgeContent);
   console.log("   Owner:", contentOwner);
+  console.log("   Paused:", contentPaused);
   console.log("   VotesContract:", votesContract);
   console.log("   MinStakeToVote:", ethers.formatEther(minStakeToVote), "KC");
+  console.log("   MinVotesToReward:", minVotesToReward.toString());
+  console.log("   RewardPerVote:", ethers.formatEther(rewardPerVote), "KC");
   console.log("   Treasury(bound):", contentTreasury);
-
-  // Content 自己可能仍有余额（比如误转账），但奖励池以 Treasury 为准
-  const contentBal = await ethers.provider.getBalance(info.contracts.KnowledgeContent);
+  console.log("   ContentCount:", contentCount.toString());
   console.log("   Balance (Content):", ethers.formatEther(contentBal), "KC");
 
-  // =========================================
-  // 2️⃣ TreasuryNative 状态（奖励池核心）
-  // =========================================
-  console.log("\n🏦 TreasuryNative 状态:");
+  if (contentCount > 0n) {
+    const latest = await content.contents(contentCount);
+    console.log("   LatestContent.id:", latest.id.toString());
+    console.log("   LatestContent.author:", latest.author);
+    console.log("   LatestContent.voteCount:", latest.voteCount.toString());
+    console.log("   LatestContent.rewardAccrued:", latest.rewardAccrued);
+    console.log("   LatestContent.deleted:", latest.deleted);
+  }
+
+  console.log("\nTreasuryNative state");
   const treasuryOwner = await treasury.owner();
   const treasuryBal = await ethers.provider.getBalance(info.contracts.TreasuryNative);
+  const treasuryPaused = await treasury.paused();
+  const epochDuration = await treasury.epochDuration();
+  const epochBudget = await treasury.epochBudget();
+  const epochSpent = await treasury.epochSpent();
+  const epochStart = await treasury.epochStart();
+  const totalPendingRewards = await treasury.totalPendingRewards();
+  const spenderOk = await treasury.isSpender(info.contracts.KnowledgeContent);
+  const pendingDeployer = await treasury.pendingRewards(deployer.address);
+  const treasuryCoversPending = treasuryBal >= totalPendingRewards;
 
   console.log("   Address:", info.contracts.TreasuryNative);
   console.log("   Owner:", treasuryOwner);
-  console.log("   Balance (Treasury):", ethers.formatEther(treasuryBal), "KC");
-
-  console.log("   EpochDuration:", (await treasury.epochDuration()).toString(), "秒");
-  console.log("   EpochBudget:", ethers.formatEther(await treasury.epochBudget()), "KC");
-  console.log("   EpochSpent:", ethers.formatEther(await treasury.epochSpent()), "KC");
-  console.log("   EpochStart:", (await treasury.epochStart()).toString());
-
-  const spenderOk = await treasury.isSpender(info.contracts.KnowledgeContent);
-  console.log("   Content is Spender?", spenderOk);
-
-  // 任意展示一个 pendingRewards（deployer）用于检查读接口
-  const pendingDeployer = await treasury.pendingRewards(deployer.address);
+  console.log("   Paused:", treasuryPaused);
+  console.log("   Balance:", ethers.formatEther(treasuryBal), "KC");
+  console.log("   EpochDuration:", epochDuration.toString(), "seconds");
+  console.log("   EpochBudget:", ethers.formatEther(epochBudget), "KC");
+  console.log("   EpochSpent:", ethers.formatEther(epochSpent), "KC");
+  console.log("   EpochStart:", epochStart.toString());
+  console.log("   Content is Spender?:", spenderOk);
+  console.log("   TotalPendingRewards:", ethers.formatEther(totalPendingRewards), "KC");
   console.log("   PendingRewards(deployer):", ethers.formatEther(pendingDeployer), "KC");
+  console.log("   Balance covers pending rewards?:", treasuryCoversPending);
 
-  // =========================================
-  // 3️⃣ Timelock 状态
-  // =========================================
-  console.log("\n⏳ TimelockController 状态:");
-
+  console.log("\nTimelock state");
   const PROPOSER_ROLE = await timelock.PROPOSER_ROLE();
   const EXECUTOR_ROLE = await timelock.EXECUTOR_ROLE();
   const CANCELLER_ROLE = await timelock.CANCELLER_ROLE();
   const TIMELOCK_ADMIN_ROLE = await timelock.TIMELOCK_ADMIN_ROLE();
 
-  console.log("   Address:", info.contracts.TimelockController);
-  console.log("   MinDelay:", Number(await timelock.getMinDelay()), "秒");
-
   const isGovProposer = await timelock.hasRole(PROPOSER_ROLE, info.contracts.KnowledgeGovernor);
   const isDeployerProposer = await timelock.hasRole(PROPOSER_ROLE, deployer.address);
-
   const isDeployerAdmin = await timelock.hasRole(TIMELOCK_ADMIN_ROLE, deployer.address);
   const isGovAdmin = await timelock.hasRole(TIMELOCK_ADMIN_ROLE, info.contracts.KnowledgeGovernor);
-
   const isDeployerCanceller = await timelock.hasRole(CANCELLER_ROLE, deployer.address);
   const isGovCanceller = await timelock.hasRole(CANCELLER_ROLE, info.contracts.KnowledgeGovernor);
-
   const openExecutor = await timelock.hasRole(EXECUTOR_ROLE, ethers.ZeroAddress);
 
-  console.log("   Governor is Proposer?", isGovProposer);
-  console.log("   Deployer is Proposer?", isDeployerProposer);
+  console.log("   Address:", info.contracts.TimelockController);
+  console.log("   MinDelay:", Number(await timelock.getMinDelay()), "seconds");
+  console.log("   Governor is Proposer?:", isGovProposer);
+  console.log("   Deployer is Proposer?:", isDeployerProposer);
+  console.log("   Deployer is TimelockAdmin?:", isDeployerAdmin);
+  console.log("   Governor is TimelockAdmin?:", isGovAdmin);
+  console.log("   Deployer is Canceller?:", isDeployerCanceller);
+  console.log("   Governor is Canceller?:", isGovCanceller);
+  console.log("   Open Executor (address(0))?:", openExecutor);
 
-  console.log("   Deployer is TimelockAdmin?", isDeployerAdmin);
-  console.log("   Governor is TimelockAdmin?", isGovAdmin);
-
-  console.log("   Deployer is Canceller?", isDeployerCanceller);
-  console.log("   Governor is Canceller?", isGovCanceller);
-
-  console.log("   Open Executor (address(0))?", openExecutor);
-
-  // =========================================
-  // 4️⃣ Governor 状态
-  // =========================================
-  console.log("\n🏛️ KnowledgeGovernor 状态:");
+  console.log("\nGovernor state");
   const govToken = await governor.token();
   const govTimelock = await governor.timelock();
 
   console.log("   Address:", info.contracts.KnowledgeGovernor);
   console.log("   Token:", govToken);
   console.log("   Timelock:", govTimelock);
+  console.log("   VotingDelay:", (await governor.votingDelay()).toString(), "blocks");
+  console.log("   VotingPeriod:", (await governor.votingPeriod()).toString(), "blocks");
+  console.log("   ProposalThreshold:", ethers.formatEther(await governor.proposalThreshold()), "KC");
+  console.log("   Quorum @ latest block:", (await governor.quorum((await ethers.provider.getBlockNumber()) - 1)).toString());
 
-  // =========================================
-  // 5️⃣ 最终安全结论（关键断言/提示）
-  // =========================================
-  console.log("\n🧾 关键安全结论:");
-
+  console.log("\nSafety summary");
   const contentOwnerIsTimelock = eqAddr(contentOwner, info.contracts.TimelockController);
   const treasuryOwnerIsTimelock = eqAddr(treasuryOwner, info.contracts.TimelockController);
   const contentTreasuryIsTreasury = eqAddr(contentTreasury, info.contracts.TreasuryNative);
-
-  console.log("   Content Owner == Timelock ?", contentOwnerIsTimelock);
-  console.log("   Treasury Owner == Timelock ?", treasuryOwnerIsTimelock);
-  console.log("   Content.treasury == TreasuryNative ?", contentTreasuryIsTreasury);
-  console.log("   Treasury.spender(Content) == true ?", spenderOk);
-
-  if (!contentOwnerIsTimelock) console.log("   ⚠️ Content Owner 仍不是 Timelock（未完全去中心化）");
-  if (!treasuryOwnerIsTimelock) console.log("   ⚠️ Treasury Owner 仍不是 Timelock（国库未交给 DAO）");
-  if (!contentTreasuryIsTreasury) console.log("   ⚠️ Content 未绑定正确的 Treasury（发奖会失败/走错池子）");
-  if (!spenderOk) console.log("   ⚠️ Treasury 未授权 Content 为 Spender（distributeReward 会 revert）");
-
-  if (isDeployerAdmin) console.log("   ⚠️ Deployer 仍是 TimelockAdmin（存在后门权限）");
-  if (isDeployerCanceller) console.log("   ⚠️ Deployer 仍是 Canceller（仍可取消已排队操作）");
-  if (!openExecutor) console.log("   ⚠️ 未开放执行者，可能导致无人可 execute（建议 EXECUTOR_ROLE 给 address(0)）");
-
-  // 额外一致性检查：Governor.timelock 应等于 TimelockController 地址
   const govTimelockOk = eqAddr(govTimelock, info.contracts.TimelockController);
-  if (!govTimelockOk) console.log("   ⚠️ Governor.timelock 与 deployments 不一致（可能部署信息错/读错网）");
 
-  console.log("\n✅ 系统状态检查完成。");
+  console.log("   Content owner == Timelock:", contentOwnerIsTimelock);
+  console.log("   Treasury owner == Timelock:", treasuryOwnerIsTimelock);
+  console.log("   Content.treasury == TreasuryNative:", contentTreasuryIsTreasury);
+  console.log("   Treasury.spender(Content) == true:", spenderOk);
+  console.log("   Governor.timelock == TimelockController:", govTimelockOk);
+  console.log("   Treasury balance >= reserved rewards:", treasuryCoversPending);
+
+  if (!contentOwnerIsTimelock) {
+    console.log("   WARN Content owner is not Timelock.");
+  }
+  if (!treasuryOwnerIsTimelock) {
+    console.log("   WARN Treasury owner is not Timelock.");
+  }
+  if (!contentTreasuryIsTreasury) {
+    console.log("   WARN KnowledgeContent is bound to the wrong Treasury.");
+  }
+  if (!spenderOk) {
+    console.log("   WARN Treasury has not authorized KnowledgeContent as spender.");
+  }
+  if (isDeployerAdmin) {
+    console.log("   WARN Deployer still has Timelock admin privileges.");
+  }
+  if (isDeployerCanceller) {
+    console.log("   WARN Deployer still has Canceller privileges.");
+  }
+  if (!openExecutor) {
+    console.log("   WARN Timelock executor role is not open.");
+  }
+  if (!govTimelockOk) {
+    console.log("   WARN Governor timelock does not match deployment info.");
+  }
+  if (!treasuryCoversPending) {
+    console.log("   WARN Treasury balance does not cover reserved rewards.");
+  }
+
+  console.log("\nSystem verification completed.");
 }
 
 main().catch((error) => {

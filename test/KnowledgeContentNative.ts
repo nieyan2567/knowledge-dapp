@@ -19,6 +19,182 @@ async function mineBlocks(n: number) {
 }
 
 describe("KnowledgeContent (Treasury Native + Metadata)", function () {
+
+  it("Should allow author to update content before any votes", async function () {
+    const [, author] = await ethers.getSigners();
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await content.connect(author).registerContent(
+      "QmOldHash",
+      "Old Title",
+      "Old Description"
+    );
+
+    await expect(
+      content
+        .connect(author)
+        .updateContent(1, "QmNewHash", "New Title", "New Description")
+    )
+      .to.emit(content, "ContentUpdated")
+      .withArgs(1, author.address, "QmNewHash", "New Title", "New Description");
+
+    const stored = await content.contents(1);
+    expect(stored.ipfsHash).to.equal("QmNewHash");
+    expect(stored.title).to.equal("New Title");
+    expect(stored.description).to.equal("New Description");
+    expect(stored.deleted).to.equal(false);
+  });
+
+  it("Should revert update after content receives votes", async function () {
+    const [deployer, author] = await ethers.getSigners();
+
+    const nativeVotesFactory = (await ethers.getContractFactory(
+      "NativeVotes"
+    )) as unknown as NativeVotes__factory;
+    const nativeVotes: NativeVotes = await nativeVotesFactory.deploy(1, 1);
+    await nativeVotes.waitForDeployment();
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await content.setAntiSybil(
+      await nativeVotes.getAddress(),
+      ethers.parseEther("1")
+    );
+
+    await content.connect(author).registerContent("QmHash", "Title", "Desc");
+
+    const voter = ethers.Wallet.createRandom().connect(ethers.provider);
+    await deployer.sendTransaction({
+      to: voter.address,
+      value: ethers.parseEther("2"),
+    });
+
+    await nativeVotes.connect(voter).deposit({ value: ethers.parseEther("1") });
+    await mineBlocks(1);
+    await nativeVotes.connect(voter).activate();
+    await content.connect(voter).vote(1);
+
+    await expect(
+      content
+        .connect(author)
+        .updateContent(1, "QmNewHash", "New Title", "New Description")
+    ).to.be.revertedWith("already voted");
+  });
+
+  it("Should allow author to soft delete content and block reward actions", async function () {
+    const [deployer, author] = await ethers.getSigners();
+
+    const nativeVotesFactory = (await ethers.getContractFactory(
+      "NativeVotes"
+    )) as unknown as NativeVotes__factory;
+    const nativeVotes: NativeVotes = await nativeVotesFactory.deploy(1, 1);
+    await nativeVotes.waitForDeployment();
+
+    const treasuryFactory = (await ethers.getContractFactory(
+      "TreasuryNative"
+    )) as unknown as TreasuryNative__factory;
+    const treasury: TreasuryNative = await treasuryFactory.deploy(
+      3600,
+      ethers.parseEther("100")
+    );
+    await treasury.waitForDeployment();
+
+    await deployer.sendTransaction({
+      to: await treasury.getAddress(),
+      value: ethers.parseEther("5"),
+    });
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await content.setAntiSybil(
+      await nativeVotes.getAddress(),
+      ethers.parseEther("1")
+    );
+    await content.setTreasury(await treasury.getAddress());
+    await treasury.setSpender(await content.getAddress(), true);
+
+    await content.connect(author).registerContent("QmHash", "Title", "Desc");
+
+    await expect(content.connect(author).deleteContent(1))
+      .to.emit(content, "ContentDeleted")
+      .withArgs(1, author.address, author.address);
+
+    const stored = await content.contents(1);
+    expect(stored.deleted).to.equal(true);
+
+    await expect(
+      content.connect(author).updateContent(1, "QmNew", "New", "New")
+    ).to.be.revertedWith("content deleted");
+
+    const voter = ethers.Wallet.createRandom().connect(ethers.provider);
+    await deployer.sendTransaction({
+      to: voter.address,
+      value: ethers.parseEther("2"),
+    });
+    await nativeVotes.connect(voter).deposit({ value: ethers.parseEther("1") });
+    await mineBlocks(1);
+    await nativeVotes.connect(voter).activate();
+
+    await expect(content.connect(voter).vote(1)).to.be.revertedWith(
+      "content deleted"
+    );
+    await expect(content.distributeReward(1)).to.be.revertedWith(
+      "content deleted"
+    );
+  });
+
+  it("Should allow owner to delete content for moderation", async function () {
+    const [deployer, author] = await ethers.getSigners();
+
+    const nativeVotesFactory = (await ethers.getContractFactory(
+      "NativeVotes"
+    )) as unknown as NativeVotes__factory;
+    const nativeVotes: NativeVotes = await nativeVotesFactory.deploy(1, 1);
+    await nativeVotes.waitForDeployment();
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await content.setAntiSybil(
+      await nativeVotes.getAddress(),
+      ethers.parseEther("1")
+    );
+
+    await content.connect(author).registerContent("QmHash", "Title", "Desc");
+
+    const voter = ethers.Wallet.createRandom().connect(ethers.provider);
+    await deployer.sendTransaction({
+      to: voter.address,
+      value: ethers.parseEther("2"),
+    });
+
+    await nativeVotes.connect(voter).deposit({ value: ethers.parseEther("1") });
+    await mineBlocks(1);
+    await nativeVotes.connect(voter).activate();
+    await content.connect(voter).vote(1);
+
+    await expect(content.connect(deployer).deleteContent(1))
+      .to.emit(content, "ContentDeleted")
+      .withArgs(1, deployer.address, author.address);
+
+    expect((await content.contents(1)).deleted).to.equal(true);
+  });
   
   it("Should accrue reward into Treasury and allow author to claim() [With Title/Desc]", async function () {
     const [deployer, author] = await ethers.getSigners();
