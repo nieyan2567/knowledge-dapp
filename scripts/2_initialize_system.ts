@@ -11,8 +11,13 @@ async function main() {
   const nativeVotesAddress = info.contracts.NativeVotes;
   const timelockAddress = info.contracts.TimelockController;
   const treasuryAddress = info.contracts.TreasuryNative;
+  const faucetWallet = process.env.FAUCET_WALLET;
 
   const [deployer] = await ethers.getSigners();
+
+	if (!faucetWallet) {
+    throw new Error("FAUCET_WALLET is not set in .env");
+  }
   
   // 获取合约实例 (带类型)
   const ContentFactory = await ethers.getContractFactory("KnowledgeContent");
@@ -79,6 +84,30 @@ async function main() {
     console.log("✅ Treasury 充值成功，交易哈希:", fundTx.hash);
   } else {
     console.log("✅ 跳过充值：Treasury 余额已达到/超过 5 KC");
+  }
+
+  // 2.1 充值 Faucet
+  const faucetTargetBalance = ethers.parseEther("50");
+  const faucetCurrentBalance = await ethers.provider.getBalance(faucetWallet);
+
+  console.log("Faucet 当前余额:", ethers.formatEther(faucetCurrentBalance), "KC");
+
+  if (faucetCurrentBalance < faucetTargetBalance) {
+    const need = faucetTargetBalance - faucetCurrentBalance;
+    console.log(`💰 正在向 Faucet 补齐余额：${ethers.formatEther(need)} KC...`);
+
+    const fundFaucetTx = await deployer.sendTransaction({
+      to: faucetWallet,
+      value: need,
+    });
+    await fundFaucetTx.wait();
+    console.log("✅ Faucet 充值成功，交易哈希:", fundFaucetTx.hash);
+  } else {
+    console.log(
+      `✅ 跳过充值：Faucet 余额已达到/超过 ${ethers.formatEther(
+        faucetTargetBalance
+      )} KC`
+    );
   }
 
   // 3. setAntiSybil （Content）

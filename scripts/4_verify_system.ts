@@ -148,6 +148,7 @@ async function main() {
   const revenueVaultPaused = await revenueVault.paused();
   const revenueVaultTreasury = await revenueVault.treasury();
   const faucetWallet = await revenueVault.faucetWallet();
+  const faucetBalance = await ethers.provider.getBalance(faucetWallet);
   const faucetShareBps = await revenueVault.faucetShareBps();
   const faucetPending = await revenueVault.faucetPending();
   const minFaucetPayout = await revenueVault.minFaucetPayout();
@@ -168,6 +169,7 @@ async function main() {
   console.log("   Paused:", revenueVaultPaused);
   console.log("   Treasury(bound):", revenueVaultTreasury);
   console.log("   FaucetWallet:", faucetWallet);
+  console.log("   FaucetBalance:", ethers.formatEther(faucetBalance), "KC");
   console.log("   FaucetShareBps:", faucetShareBps.toString());
   console.log("   FaucetPending:", ethers.formatEther(faucetPending), "KC");
   console.log("   MinFaucetPayout:", ethers.formatEther(minFaucetPayout), "KC");
