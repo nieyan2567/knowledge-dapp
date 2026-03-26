@@ -18,6 +18,24 @@ async function mineBlocks(n: number) {
 }
 
 describe("KnowledgeContent (Treasury Native + Metadata)", function () {
+  it("Should allow owner to configure content policy", async function () {
+    const [deployer] = await ethers.getSigners();
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await expect(content.setContentPolicy(2, true, 5))
+      .to.emit(content, "ContentPolicyUpdated")
+      .withArgs(2, true, 5);
+
+    expect(await content.editLockVotes()).to.equal(2n);
+    expect(await content.allowDeleteAfterVote()).to.equal(true);
+    expect(await content.maxVersionsPerContent()).to.equal(5n);
+  });
+
   it("Should store the first version and append history on update", async function () {
     const [, author] = await ethers.getSigners();
 
@@ -114,7 +132,58 @@ describe("KnowledgeContent (Treasury Native + Metadata)", function () {
       content
         .connect(author)
         .updateContent(1, "QmNewHash", "New Title", "New Description")
-    ).to.be.revertedWith("already voted");
+    ).to.be.revertedWith("edit locked");
+  });
+
+  it("Should allow update until editLockVotes is reached", async function () {
+    const [deployer, author] = await ethers.getSigners();
+
+    const nativeVotesFactory = (await ethers.getContractFactory(
+      "NativeVotes"
+    )) as unknown as NativeVotes__factory;
+    const nativeVotes: NativeVotes = await nativeVotesFactory.deploy(1, 1);
+    await nativeVotes.waitForDeployment();
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await content.setContentPolicy(2, false, 20);
+    await content.setAntiSybil(
+      await nativeVotes.getAddress(),
+      ethers.parseEther("1")
+    );
+    await content.connect(author).registerContent("QmHash", "Title", "Desc");
+
+    const voter1 = ethers.Wallet.createRandom().connect(ethers.provider);
+    const voter2 = ethers.Wallet.createRandom().connect(ethers.provider);
+
+    for (const voter of [voter1, voter2]) {
+      await deployer.sendTransaction({
+        to: voter.address,
+        value: ethers.parseEther("2"),
+      });
+      await nativeVotes
+        .connect(voter)
+        .deposit({ value: ethers.parseEther("1") });
+      await mineBlocks(1);
+      await nativeVotes.connect(voter).activate();
+    }
+
+    await content.connect(voter1).vote(1);
+    await content
+      .connect(author)
+      .updateContent(1, "QmHashV2", "Title V2", "Desc V2");
+
+    await content.connect(voter2).vote(1);
+
+    await expect(
+      content
+        .connect(author)
+        .updateContent(1, "QmHashV3", "Title V3", "Desc V3")
+    ).to.be.revertedWith("edit locked");
   });
 
   it("Should preserve version history after delete and block reward actions", async function () {
@@ -195,6 +264,71 @@ describe("KnowledgeContent (Treasury Native + Metadata)", function () {
     await expect(content.distributeReward(1)).to.be.revertedWith(
       "content deleted"
     );
+  });
+
+  it("Should allow author to delete voted content when policy enables it", async function () {
+    const [deployer, author] = await ethers.getSigners();
+
+    const nativeVotesFactory = (await ethers.getContractFactory(
+      "NativeVotes"
+    )) as unknown as NativeVotes__factory;
+    const nativeVotes: NativeVotes = await nativeVotesFactory.deploy(1, 1);
+    await nativeVotes.waitForDeployment();
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await content.setContentPolicy(1, true, 20);
+    await content.setAntiSybil(
+      await nativeVotes.getAddress(),
+      ethers.parseEther("1")
+    );
+
+    await content.connect(author).registerContent("QmHash", "Title", "Desc");
+
+    const voter = ethers.Wallet.createRandom().connect(ethers.provider);
+    await deployer.sendTransaction({
+      to: voter.address,
+      value: ethers.parseEther("2"),
+    });
+    await nativeVotes.connect(voter).deposit({ value: ethers.parseEther("1") });
+    await mineBlocks(1);
+    await nativeVotes.connect(voter).activate();
+    await content.connect(voter).vote(1);
+
+    await expect(content.connect(author).deleteContent(1))
+      .to.emit(content, "ContentDeleted")
+      .withArgs(1, author.address, author.address);
+  });
+
+  it("Should enforce maxVersionsPerContent", async function () {
+    const [, author] = await ethers.getSigners();
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await content.setContentPolicy(1, false, 2);
+    await content.connect(author).registerContent(
+      "QmHashV1",
+      "Title V1",
+      "Desc V1"
+    );
+
+    await content
+      .connect(author)
+      .updateContent(1, "QmHashV2", "Title V2", "Desc V2");
+
+    await expect(
+      content
+        .connect(author)
+        .updateContent(1, "QmHashV3", "Title V3", "Desc V3")
+    ).to.be.revertedWith("max versions reached");
   });
 
   it("Should allow owner to delete content for moderation", async function () {

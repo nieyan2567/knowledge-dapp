@@ -123,6 +123,50 @@ async function setupGovernanceEnvironment(): Promise<GovernanceEnv> {
 }
 
 describe("Governance Flow & Edge Cases", function () {
+  it("Should extend the proposal deadline when quorum is reached late", async function () {
+    const env = await setupGovernanceEnvironment();
+    const { voter1, governor, content, treasury } = env;
+
+    const calldata1 = content.interface.encodeFunctionData("setRewardRules", [
+      5,
+      ethers.parseEther("0.001"),
+    ]);
+    const calldata2 = treasury.interface.encodeFunctionData("setBudget", [
+      3600,
+      ethers.parseEther("10"),
+    ]);
+
+    const targets = [await content.getAddress(), await treasury.getAddress()];
+    const values = [0, 0];
+    const calldatas = [calldata1, calldata2];
+    const description = "Late quorum extension proposal";
+    const descriptionHash = ethers.id(description);
+
+    await governor.connect(voter1).propose(targets, values, calldatas, description);
+    const proposalId = await governor.hashProposal(
+      targets,
+      values,
+      calldatas,
+      descriptionHash
+    );
+
+    const votingDelay = Number(await governor.votingDelay());
+    await mineBlocks(votingDelay + 1);
+
+    const initialDeadline = await governor.proposalDeadline(proposalId);
+    const extension = await governor.lateQuorumVoteExtension();
+    const currentBlock = await ethers.provider.getBlockNumber();
+
+    await mineBlocks(Number(initialDeadline) - currentBlock - 1);
+
+    await governor.connect(voter1).castVote(proposalId, 1);
+
+    const extendedDeadline = await governor.proposalDeadline(proposalId);
+    expect(extendedDeadline).to.be.greaterThan(initialDeadline);
+    expect(extendedDeadline).to.equal(
+      BigInt((await ethers.provider.getBlockNumber()) + Number(extension))
+    );
+  });
   
   // === 测试 1: 正常流程 (Happy Path) ===
   it("should update reward rules AND treasury budget via propose -> vote -> queue -> execute", async function () {

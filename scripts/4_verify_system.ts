@@ -64,6 +64,7 @@ async function main() {
   console.log("   NativeVotes.activationBlocks():", (await nativeVotes.activationBlocks()).toString());
   console.log("   KnowledgeContent.updateContent():", hasFunction(content, "updateContent"));
   console.log("   KnowledgeContent.deleteContent():", hasFunction(content, "deleteContent"));
+  console.log("   KnowledgeContent.setContentPolicy():", hasFunction(content, "setContentPolicy"));
   console.log("   KnowledgeContent.contentVersionCount():", hasFunction(content, "contentVersionCount"));
   console.log("   KnowledgeContent.getContentVersion():", hasFunction(content, "getContentVersion"));
   console.log("   TreasuryNative.totalPendingRewards():", hasFunction(treasury, "totalPendingRewards"));
@@ -80,6 +81,9 @@ async function main() {
   const minStakeToVote = await content.minStakeToVote();
   const minVotesToReward = await content.minVotesToReward();
   const rewardPerVote = await content.rewardPerVote();
+  const editLockVotes = await content.editLockVotes();
+  const allowDeleteAfterVote = await content.allowDeleteAfterVote();
+  const maxVersionsPerContent = await content.maxVersionsPerContent();
   const contentTreasury = await content.treasury();
   const contentPaused = await content.paused();
   const contentCount = await content.contentCount();
@@ -92,6 +96,9 @@ async function main() {
   console.log("   MinStakeToVote:", ethers.formatEther(minStakeToVote), "KC");
   console.log("   MinVotesToReward:", minVotesToReward.toString());
   console.log("   RewardPerVote:", ethers.formatEther(rewardPerVote), "KC");
+  console.log("   EditLockVotes:", editLockVotes.toString());
+  console.log("   AllowDeleteAfterVote:", allowDeleteAfterVote);
+  console.log("   MaxVersionsPerContent:", maxVersionsPerContent.toString());
   console.log("   Treasury(bound):", contentTreasury);
   console.log("   ContentCount:", contentCount.toString());
   console.log("   Balance (Content):", ethers.formatEther(contentBal), "KC");
@@ -219,6 +226,7 @@ async function main() {
   console.log("   Timelock:", govTimelock);
   console.log("   VotingDelay:", (await governor.votingDelay()).toString(), "blocks");
   console.log("   VotingPeriod:", (await governor.votingPeriod()).toString(), "blocks");
+  console.log("   LateQuorumVoteExtension:", (await governor.lateQuorumVoteExtension()).toString(), "blocks");
   console.log("   ProposalThreshold:", ethers.formatEther(await governor.proposalThreshold()), "KC");
   console.log("   Quorum @ latest block:", (await governor.quorum((await ethers.provider.getBlockNumber()) - 1)).toString());
 

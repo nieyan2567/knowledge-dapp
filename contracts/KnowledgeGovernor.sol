@@ -18,6 +18,7 @@ import "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
+import "@openzeppelin/contracts/governance/extensions/GovernorPreventLateQuorum.sol";
 
 contract KnowledgeGovernor is
     Governor,
@@ -25,7 +26,8 @@ contract KnowledgeGovernor is
     GovernorVotes,
     GovernorVotesQuorumFraction,
     GovernorCountingSimple,
-    GovernorTimelockControl
+    GovernorTimelockControl,
+    GovernorPreventLateQuorum
 {
     constructor(IVotes _token, TimelockController _timelock)
         Governor("KnowledgeGovernor")
@@ -37,6 +39,7 @@ contract KnowledgeGovernor is
         GovernorVotes(_token)
         GovernorVotesQuorumFraction(4) // 4% 法定人数
         GovernorTimelockControl(_timelock)
+        GovernorPreventLateQuorum(20)
     {}
 
     // -------- 必须 override 的函数（OZ 要求）--------
@@ -86,6 +89,15 @@ contract KnowledgeGovernor is
         return super.state(proposalId);
     }
 
+    function proposalDeadline(uint256 proposalId)
+        public
+        view
+        override(IGovernor, Governor, GovernorPreventLateQuorum)
+        returns (uint256)
+    {
+        return super.proposalDeadline(proposalId);
+    }
+
     function _execute(
         uint256 proposalId,
         address[] memory targets,
@@ -119,6 +131,37 @@ contract KnowledgeGovernor is
         returns (address)
     {
         return super._executor();
+    }
+
+    function lateQuorumVoteExtension()
+        public
+        view
+        override(GovernorPreventLateQuorum)
+        returns (uint64)
+    {
+        return super.lateQuorumVoteExtension();
+    }
+
+    function setLateQuorumVoteExtension(uint64 newVoteExtension)
+        public
+        override(GovernorPreventLateQuorum)
+        onlyGovernance
+    {
+        super.setLateQuorumVoteExtension(newVoteExtension);
+    }
+
+    function _castVote(
+        uint256 proposalId,
+        address account,
+        uint8 support,
+        string memory reason,
+        bytes memory params
+    )
+        internal
+        override(Governor, GovernorPreventLateQuorum)
+        returns (uint256)
+    {
+        return super._castVote(proposalId, account, support, reason, params);
     }
 
     function supportsInterface(bytes4 interfaceId)

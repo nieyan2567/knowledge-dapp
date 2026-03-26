@@ -58,12 +58,16 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     uint256 public minVotesToReward;
     uint256 public rewardPerVote;
     uint256 public minStakeToVote;
+    uint256 public editLockVotes;
+    bool public allowDeleteAfterVote;
+    uint256 public maxVersionsPerContent;
 
     IVotesLike public votesContract;
     ITreasuryNative public treasury;
 
     uint256 public constant MAX_MIN_VOTES_TO_REWARD = 10000;
     uint256 public constant MAX_REWARD_PER_VOTE = 1 ether;
+    uint256 public constant MAX_MAX_VERSIONS_PER_CONTENT = 100;
 
     event ContentRegistered(
         uint256 id,
@@ -103,6 +107,12 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
     event TreasuryUpdated(address treasury);
 
+    event ContentPolicyUpdated(
+        uint256 editLockVotes,
+        bool allowDeleteAfterVote,
+        uint256 maxVersionsPerContent
+    );
+
     event RewardAccrueRequested(
         uint256 indexed contentId,
         address indexed author,
@@ -113,8 +123,16 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         minVotesToReward = 1;
         rewardPerVote = 1e15;
         minStakeToVote = 1 ether;
+        editLockVotes = 1;
+        allowDeleteAfterVote = false;
+        maxVersionsPerContent = 20;
 
         emit RewardRulesUpdated(minVotesToReward, rewardPerVote);
+        emit ContentPolicyUpdated(
+            editLockVotes,
+            allowDeleteAfterVote,
+            maxVersionsPerContent
+        );
     }
 
     // ---------------- Admin ----------------
@@ -164,6 +182,29 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         rewardPerVote = _rewardPerVote;
 
         emit RewardRulesUpdated(_minVotesToReward, _rewardPerVote);
+    }
+
+    function setContentPolicy(
+        uint256 _editLockVotes,
+        bool _allowDeleteAfterVote,
+        uint256 _maxVersionsPerContent
+    ) external onlyOwner {
+        require(_editLockVotes > 0, "bad edit lock");
+        require(
+            _maxVersionsPerContent > 0 &&
+            _maxVersionsPerContent <= MAX_MAX_VERSIONS_PER_CONTENT,
+            "bad max versions"
+        );
+
+        editLockVotes = _editLockVotes;
+        allowDeleteAfterVote = _allowDeleteAfterVote;
+        maxVersionsPerContent = _maxVersionsPerContent;
+
+        emit ContentPolicyUpdated(
+            _editLockVotes,
+            _allowDeleteAfterVote,
+            _maxVersionsPerContent
+        );
     }
 
     function pause() external onlyOwner {
@@ -246,8 +287,12 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
         require(c.author == msg.sender, "not author");
         require(!c.deleted, "content deleted");
-        require(c.voteCount == 0, "already voted");
+        require(c.voteCount < editLockVotes, "edit locked");
         require(!c.rewardAccrued, "reward already accrued");
+        require(
+            contentVersionCount[contentId] < maxVersionsPerContent,
+            "max versions reached"
+        );
 
         uint256 nextVersion = contentVersionCount[contentId] + 1;
 
@@ -295,7 +340,10 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         require(isAuthor || isOwnerCaller, "not authorized");
 
         if (isAuthor) {
-            require(c.voteCount == 0, "already voted");
+            require(
+                allowDeleteAfterVote || c.voteCount == 0,
+                "delete locked"
+            );
             require(!c.rewardAccrued, "reward already accrued");
         }
 
