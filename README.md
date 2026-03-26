@@ -1,81 +1,186 @@
-# 基于区块链的去中心化知识协作与激励系统
+# Knowledge DApp Contracts
 
-当前仓库已初始化为多模块结构：
+This repository contains the blockchain layer for the Knowledge DApp. It includes the staking, content, treasury, governor, and timelock contracts, along with deployment and verification scripts.
 
-- `contracts/`：Solidity + Hardhat
-- `backend/`：Spring Boot + Web3j + MySQL
-- `frontend/`：Vue3 + Web3.js
-- `infra/`：MySQL + IPFS 本地开发依赖
+## Repository Scope
 
-## 1. 目录结构
+This repository currently contains only the smart contract stack and related tests.
 
 ```text
 knowledge-dapp/
 ├─ contracts/
-├─ backend/
-├─ frontend/
-└─ infra/
+├─ scripts/
+├─ test/
+├─ deployments/
+├─ typechain-types/
+└─ hardhat.config.ts
 ```
 
-## 2. 快速开始（建议顺序）
+Frontend code is maintained separately in the sibling project `../knowledge-dapp-ui`. The ABI export script in this repository writes into that project.
 
-1. 启动基础依赖（MySQL + IPFS）
-2. 启动本地链与部署合约（Hardhat）
-3. 启动后端（Spring Boot）
-4. 启动前端（Vue3）
+## Contract Architecture
 
-## 3. 启动基础依赖
+- `NativeVotes`: users stake KC, wait for activation, and obtain governance voting power.
+- `KnowledgeContent`: authors register content, update content metadata with on-chain version history, delete content by soft delete, and accept votes.
+- `TreasuryNative`: holds KC rewards, reserves pending rewards, and lets beneficiaries claim them.
+- `KnowledgeGovernor`: DAO proposal and voting entrypoint.
+- `TimelockController`: delayed execution and final owner of governance-controlled contracts.
+
+## Content Version History
+
+`KnowledgeContent` now stores version history natively on-chain.
+
+- `registerContent(...)` creates version `1`
+- `updateContent(...)` appends a new version instead of deleting or overwriting history
+- `contentVersionCount(contentId)` returns the number of stored versions
+- `getContentVersion(contentId, version)` returns the metadata of a historical version
+- `deleteContent(contentId)` is a soft delete only; historical versions remain queryable
+
+Current safety rules:
+
+- only the author can update content
+- deleted content cannot be updated, voted, or rewarded
+- authors cannot update after votes exist
+- authors cannot delete after reward accrual
+- contract owner can force-delete for moderation
+
+## Treasury Model
+
+The treasury uses two separate constraints:
+
+- actual treasury balance: how much KC the contract currently holds
+- epoch budget: the maximum reward amount that may be accrued during one epoch
+
+Current deployment defaults:
+
+- initial treasury funding target: `5 KC`
+- treasury epoch duration: `7 days`
+- treasury epoch budget: `100 KC`
+
+Effective reward capacity is the smaller of:
+
+- remaining treasury balance
+- remaining epoch budget
+
+The treasury does not auto-refill. If funds run low, new reward accruals revert until someone funds the treasury again.
+
+## Prerequisites
+
+- Node.js
+- npm
+
+Install dependencies:
 
 ```bash
-cd infra
-docker compose up -d
-```
-
-- MySQL: `localhost:3306`
-- IPFS API: `localhost:5001`
-- IPFS Gateway: `localhost:8080`
-
-## 4. 启动合约模块
-
-```bash
-cd contracts
 npm install
+```
+
+## Hardhat Scripts
+
+`package.json` exposes the current supported workflows:
+
+- `npm run compile`
+- `npm test`
+- `npm run clean`
+- `npm run local_1`
+- `npm run local_2`
+- `npm run local_3`
+- `npm run local_4`
+- `npm run besu_1`
+- `npm run besu_2`
+- `npm run besu_3`
+- `npm run besu_4`
+- `npm run copy`
+
+Legacy deployment scripts have been renamed to `*.legacy.txt` and are not part of the active workflow.
+
+## Local Deployment Flow
+
+Start a local Hardhat node in one terminal:
+
+```bash
 npx hardhat node
 ```
 
-新开终端：
+Run the deployment pipeline in another terminal:
 
 ```bash
-cd contracts
-npx hardhat run scripts/deploy.js --network localhost
+npm run local_1
+npm run local_2
+npm run local_3
+npm run local_4
 ```
 
-部署后把合约地址填入：
+Meaning of each step:
 
-- `backend/src/main/resources/application.yml`
-- `frontend/.env.example`（复制为 `.env` 后使用）
+1. `local_1`: deploy `NativeVotes`, `KnowledgeContent`, `TreasuryNative`, `TimelockController`, `KnowledgeGovernor`
+2. `local_2`: fund treasury to the target balance, bind content to treasury and anti-sybil voting source, authorize content as treasury spender
+3. `local_3`: transfer contract ownership to `TimelockController` and finalize governance handover
+4. `local_4`: verify deployment integrity, role configuration, treasury reserve coverage, and content version history surface
 
-## 5. 启动后端
+Deployment metadata is stored in:
+
+- [deployments/localhost.json](/d:/knowledge-dapp/deployments/localhost.json)
+- [deployments/consortium.json](/d:/knowledge-dapp/deployments/consortium.json)
+
+## Consortium / Besu Deployment Flow
+
+Configure environment variables in `.env` as needed:
+
+- `BESU_RPC_URL`
+- `BESU_CHAIN_ID`
+- `DEPLOYER_PRIVATE_KEY`
+
+Then run:
 
 ```bash
-cd backend
-mvn spring-boot:run
+npm run besu_1
+npm run besu_2
+npm run besu_3
+npm run besu_4
 ```
 
-默认端口：`8081`
+## Frontend ABI Export
 
-## 6. 启动前端
+After contract changes, export deployment info and ABI files to the sibling frontend project:
 
 ```bash
-cd frontend
-npm install
-npm run dev
+npm run copy
 ```
 
-默认端口：`5173`
+This script writes to:
 
-## 7. 下一步建议
+- `../knowledge-dapp-ui/src/contracts/deployment.json`
+- `../knowledge-dapp-ui/src/contracts/abi/*.json`
 
-- 增加“知识发布/协作编辑/审核通过/奖励结算”完整业务流
-- 增加 IPFS 文件上传与 CID 上链
-- 增加后端对合约事件订阅与数据库持久化
+## Tests
+
+Run the full contract test suite:
+
+```bash
+npm test
+```
+
+Current coverage includes:
+
+- governance proposal, vote, queue, execute flow
+- staking activation and withdrawal behavior
+- treasury pending reward reservation accounting
+- content register, update, version history lookup, delete, vote, and reward flow
+
+## Main Files
+
+- [contracts/KnowledgeContent.sol](/d:/knowledge-dapp/contracts/KnowledgeContent.sol)
+- [contracts/TreasuryNative.sol](/d:/knowledge-dapp/contracts/TreasuryNative.sol)
+- [contracts/NativeVotes.sol](/d:/knowledge-dapp/contracts/NativeVotes.sol)
+- [contracts/KnowledgeGovernor.sol](/d:/knowledge-dapp/contracts/KnowledgeGovernor.sol)
+- [scripts/1_deploy_contracts.ts](/d:/knowledge-dapp/scripts/1_deploy_contracts.ts)
+- [scripts/2_initialize_system.ts](/d:/knowledge-dapp/scripts/2_initialize_system.ts)
+- [scripts/3_handover_ownership.ts](/d:/knowledge-dapp/scripts/3_handover_ownership.ts)
+- [scripts/4_verify_system.ts](/d:/knowledge-dapp/scripts/4_verify_system.ts)
+
+## Notes
+
+- `KnowledgeContent` keeps current metadata in `contents(contentId)` and historical metadata in `getContentVersion(...)`.
+- `deleteContent(...)` is a business-level delete, not physical deletion of chain history.
+- `TreasuryNative` tracks `totalPendingRewards` to prevent over-reserving rewards beyond available KC.
