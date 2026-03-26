@@ -19,6 +19,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 contract TreasuryNative is Ownable, Pausable, ReentrancyGuard {
     // ====== Pull Payment：用户待领取余额 ======
     mapping(address => uint256) public pendingRewards;
+    uint256 public totalPendingRewards;
 
     // ====== 授权业务合约 (Spender) ======
     mapping(address => bool) public isSpender;
@@ -79,6 +80,7 @@ contract TreasuryNative is Ownable, Pausable, ReentrancyGuard {
         require(to != address(0), "to=0");
         require(amount > 0, "amount=0");
         require(address(this).balance >= amount, "insufficient balance");
+        require(address(this).balance - amount >= totalPendingRewards, "reserved rewards");
         
         (bool ok, ) = to.call{value: amount}("");
         require(ok, "transfer failed");
@@ -117,11 +119,12 @@ contract TreasuryNative is Ownable, Pausable, ReentrancyGuard {
         // 2. 余额检查 (可选策略)
         // 如果希望严格保证“记账即有钱”，保留此行。
         // 如果希望允许“先记账后充值”(赊账模式)，请注释掉此行。
-        require(address(this).balance >= amount, "insufficient pool");
+        require(address(this).balance >= totalPendingRewards + amount, "insufficient pool");
 
         // 更新状态
         epochSpent += amount;
         pendingRewards[beneficiary] += amount;
+        totalPendingRewards += amount;
 
         emit RewardAccrued(msg.sender, beneficiary, amount);
     }
@@ -136,6 +139,7 @@ contract TreasuryNative is Ownable, Pausable, ReentrancyGuard {
 
         // 遵循 CEI 模式：先清零状态，再交互
         pendingRewards[msg.sender] = 0;
+        totalPendingRewards -= amount;
 
         (bool ok, ) = payable(msg.sender).call{value: amount}("");
         require(ok, "transfer failed");

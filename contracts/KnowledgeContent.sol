@@ -76,7 +76,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     );
 
     constructor() {
-        minVotesToReward = 10;
+        minVotesToReward = 1;
         rewardPerVote = 1e15;
         minStakeToVote = 1 ether;
 
