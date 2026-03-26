@@ -23,7 +23,7 @@ Frontend code is maintained separately in the sibling project `../knowledge-dapp
 - `NativeVotes`: users stake KC, wait for activation, and obtain governance voting power.
 - `KnowledgeContent`: authors register content, update content metadata with on-chain version history, delete content by soft delete, and accept votes.
 - `TreasuryNative`: holds KC rewards, reserves pending rewards, and lets beneficiaries claim them.
-- `RevenueVault`: collects protocol income or block rewards and refills `TreasuryNative` when treasury liquidity falls below a threshold.
+- `RevenueVault`: collects protocol income or block rewards, allocates a faucet share, and refills `TreasuryNative` when treasury liquidity falls below a threshold.
 - `KnowledgeGovernor`: DAO proposal and voting entrypoint.
 - `TimelockController`: delayed execution and final owner of governance-controlled contracts.
 
@@ -47,10 +47,11 @@ Current safety rules:
 
 ## Treasury Model
 
-The reward funding model uses `RevenueVault -> TreasuryNative`.
+The reward funding model uses `RevenueVault -> Faucet + TreasuryNative`.
 
 - `RevenueVault` accumulates revenue or QBFT block rewards
-- `RevenueVault` can refill `TreasuryNative` up to a target balance
+- `RevenueVault` reserves a configurable share for the faucet wallet
+- `RevenueVault` can refill `TreasuryNative` up to a target balance using the remaining reserve
 - `TreasuryNative` still enforces reward reservation and epoch budget limits
 
 `TreasuryNative` uses two separate constraints:
@@ -67,13 +68,16 @@ Current deployment defaults:
 - default revenue vault target treasury balance: `5 KC`
 - default revenue vault minimum refill size: `1 KC`
 - default revenue vault refill cooldown: `1 hour`
+- default faucet share: `30%`
+- default faucet wallet: `0xc1566E4E8BA76512537879887F8375C339815bBb`
+- default minimum faucet payout: `0.5 KC`
 
 Effective reward capacity is the smaller of:
 
 - remaining treasury balance
 - remaining epoch budget
 
-`RevenueVault` does not wake up by itself. It refills treasury when `refillTreasuryIfNeeded()` is called through a user transaction, keeper, or another transaction flow.
+`RevenueVault` does not wake up by itself. It settles faucet payouts and treasury refills when `rebalance()`, `releaseFaucetIfNeeded()`, or `refillTreasuryIfNeeded()` is called through a user transaction, keeper, or another transaction flow.
 
 ## Prerequisites
 
@@ -195,4 +199,4 @@ Current coverage includes:
 - `KnowledgeContent` keeps current metadata in `contents(contentId)` and historical metadata in `getContentVersion(...)`.
 - `deleteContent(...)` is a business-level delete, not physical deletion of chain history.
 - `TreasuryNative` tracks `totalPendingRewards` to prevent over-reserving rewards beyond available KC.
-- `RevenueVault` is designed to be used as the QBFT `miningbeneficiary` if you want protocol-level block rewards to replenish treasury liquidity.
+- `RevenueVault` is designed to be used as the QBFT `miningbeneficiary` if you want protocol-level block rewards to feed both the faucet wallet and treasury liquidity.

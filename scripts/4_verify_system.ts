@@ -69,6 +69,8 @@ async function main() {
   console.log("   TreasuryNative.totalPendingRewards():", hasFunction(treasury, "totalPendingRewards"));
   console.log("   RevenueVault.needsRefill():", hasFunction(revenueVault, "needsRefill"));
   console.log("   RevenueVault.refillTreasuryIfNeeded():", hasFunction(revenueVault, "refillTreasuryIfNeeded"));
+  console.log("   RevenueVault.rebalance():", hasFunction(revenueVault, "rebalance"));
+  console.log("   RevenueVault.releaseFaucetIfNeeded():", hasFunction(revenueVault, "releaseFaucetIfNeeded"));
   console.log("   Governor.timelock():", await governor.timelock());
   console.log("   Governor.token():", await governor.token());
 
@@ -145,19 +147,30 @@ async function main() {
   const revenueVaultBal = await ethers.provider.getBalance(info.contracts.RevenueVault);
   const revenueVaultPaused = await revenueVault.paused();
   const revenueVaultTreasury = await revenueVault.treasury();
+  const faucetWallet = await revenueVault.faucetWallet();
+  const faucetShareBps = await revenueVault.faucetShareBps();
+  const faucetPending = await revenueVault.faucetPending();
+  const minFaucetPayout = await revenueVault.minFaucetPayout();
   const refillThreshold = await revenueVault.refillThreshold();
   const targetTreasuryBalance = await revenueVault.targetTreasuryBalance();
   const minRefillAmount = await revenueVault.minRefillAmount();
   const refillCooldown = await revenueVault.refillCooldown();
   const lastRefillAt = await revenueVault.lastRefillAt();
   const autoRefillEnabled = await revenueVault.autoRefillEnabled();
+  const autoFaucetEnabled = await revenueVault.autoFaucetEnabled();
+  const needsFaucetPayout = await revenueVault.needsFaucetPayout();
   const needsRefill = await revenueVault.needsRefill();
+  const availableForTreasury = await revenueVault.availableForTreasury();
   const maxRefillAmount = await revenueVault.maxRefillAmount();
 
   console.log("   Address:", info.contracts.RevenueVault);
   console.log("   Owner:", revenueVaultOwner);
   console.log("   Paused:", revenueVaultPaused);
   console.log("   Treasury(bound):", revenueVaultTreasury);
+  console.log("   FaucetWallet:", faucetWallet);
+  console.log("   FaucetShareBps:", faucetShareBps.toString());
+  console.log("   FaucetPending:", ethers.formatEther(faucetPending), "KC");
+  console.log("   MinFaucetPayout:", ethers.formatEther(minFaucetPayout), "KC");
   console.log("   Balance:", ethers.formatEther(revenueVaultBal), "KC");
   console.log("   RefillThreshold:", ethers.formatEther(refillThreshold), "KC");
   console.log("   TargetTreasuryBalance:", ethers.formatEther(targetTreasuryBalance), "KC");
@@ -165,7 +178,10 @@ async function main() {
   console.log("   RefillCooldown:", refillCooldown.toString(), "seconds");
   console.log("   LastRefillAt:", lastRefillAt.toString());
   console.log("   AutoRefillEnabled:", autoRefillEnabled);
+  console.log("   AutoFaucetEnabled:", autoFaucetEnabled);
+  console.log("   NeedsFaucetPayout:", needsFaucetPayout);
   console.log("   NeedsRefill:", needsRefill);
+  console.log("   AvailableForTreasury:", ethers.formatEther(availableForTreasury), "KC");
   console.log("   MaxRefillAmount:", ethers.formatEther(maxRefillAmount), "KC");
 
   console.log("\nTimelock state");

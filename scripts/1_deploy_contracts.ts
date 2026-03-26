@@ -46,6 +46,12 @@ async function main() {
 
   // --- 4) RevenueVault ---
   console.log("📦 部署 RevenueVault...");
+  const faucetWallet = process.env.FAUCET_WALLET;
+  if (!faucetWallet) {
+    throw new Error("FAUCET_WALLET is not set in .env");
+  }
+  const faucetShareBps = 3000; // 30% to faucet, 70% reserved for treasury
+  const minFaucetPayout = ethers.parseEther("0.5");
   const refillThreshold = ethers.parseEther("2");
   const targetTreasuryBalance = ethers.parseEther("5");
   const minRefillAmount = ethers.parseEther("1");
@@ -54,6 +60,9 @@ async function main() {
   const RevenueVault = await ethers.getContractFactory("RevenueVault");
   const revenueVault = await RevenueVault.deploy(
     treasuryAddress,
+    faucetWallet,
+    faucetShareBps,
+    minFaucetPayout,
     refillThreshold,
     targetTreasuryBalance,
     minRefillAmount,

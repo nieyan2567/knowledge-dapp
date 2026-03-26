@@ -33,12 +33,15 @@ describe("RevenueVault", function () {
     return treasury;
   }
 
-  async function deployVault(treasury: TreasuryNative) {
+  async function deployVault(treasury: TreasuryNative, faucetWallet: string) {
     const vaultFactory = (await ethers.getContractFactory(
       "RevenueVault"
     )) as unknown as RevenueVault__factory;
     const vault: RevenueVault = await vaultFactory.deploy(
       await treasury.getAddress(),
+      faucetWallet,
+      3000,
+      ethers.parseEther("0.5"),
       ethers.parseEther("2"),
       ethers.parseEther("5"),
       ethers.parseEther("1"),
@@ -48,65 +51,87 @@ describe("RevenueVault", function () {
     return vault;
   }
 
-  it("Should auto-refill Treasury up to the target balance", async function () {
-    const [deployer, caller] = await ethers.getSigners();
+  it("Should split new revenue between faucet reserve and treasury reserve", async function () {
+    const [deployer, faucet] = await ethers.getSigners();
     const treasury = await deployTreasury("1");
-    const vault = await deployVault(treasury);
+    const vault = await deployVault(treasury, faucet.address);
 
     await deployer.sendTransaction({
       to: await vault.getAddress(),
       value: ethers.parseEther("10"),
     });
 
-    await expect(vault.connect(caller).refillTreasuryIfNeeded())
-      .to.emit(vault, "TreasuryRefilled")
+    await expect(vault.syncRevenue())
+      .to.emit(vault, "RevenueSynced")
       .withArgs(
-        caller.address,
-        await treasury.getAddress(),
-        ethers.parseEther("4"),
-        ethers.parseEther("5")
+        ethers.parseEther("10"),
+        ethers.parseEther("3"),
+        ethers.parseEther("3")
       );
 
+    expect(await vault.faucetPending()).to.equal(ethers.parseEther("3"));
+    expect(await vault.availableForTreasury()).to.equal(ethers.parseEther("7"));
+  });
+
+  it("Should auto-pay faucet and refill Treasury during rebalance", async function () {
+    const [deployer, faucet, caller] = await ethers.getSigners();
+    const treasury = await deployTreasury("1");
+    const vault = await deployVault(treasury, faucet.address);
+
+    await deployer.sendTransaction({
+      to: await vault.getAddress(),
+      value: ethers.parseEther("10"),
+    });
+
+    const faucetBefore = await ethers.provider.getBalance(faucet.address);
+    const tx = await vault.connect(caller).rebalance();
+    const receipt = await tx.wait();
+
+    expect(receipt?.status).to.equal(1);
+    expect(await vault.faucetPending()).to.equal(0n);
     expect(
       await ethers.provider.getBalance(await treasury.getAddress())
     ).to.equal(ethers.parseEther("5"));
+
+    const faucetAfter = await ethers.provider.getBalance(faucet.address);
+    expect(faucetAfter - faucetBefore).to.equal(ethers.parseEther("3"));
     expect(
       await ethers.provider.getBalance(await vault.getAddress())
-    ).to.equal(ethers.parseEther("6"));
-    expect(await vault.needsRefill()).to.equal(false);
+    ).to.equal(ethers.parseEther("3"));
   });
 
-  it("Should cap refill to the balance currently held by RevenueVault", async function () {
-    const [deployer, caller] = await ethers.getSigners();
-    const treasury = await deployTreasury("0.5");
-    const vault = await deployVault(treasury);
+  it("Should allow faucet payout without treasury refill when threshold not met", async function () {
+    const [deployer, faucet, caller] = await ethers.getSigners();
+    const treasury = await deployTreasury("3");
+    const vault = await deployVault(treasury, faucet.address);
 
     await deployer.sendTransaction({
       to: await vault.getAddress(),
-      value: ethers.parseEther("1.5"),
+      value: ethers.parseEther("2"),
     });
 
-    await vault.connect(caller).refillTreasuryIfNeeded();
+    expect(await vault.needsRefill()).to.equal(false);
+    expect(await vault.needsFaucetPayout()).to.equal(true);
 
-    expect(
-      await ethers.provider.getBalance(await treasury.getAddress())
-    ).to.equal(ethers.parseEther("2"));
-    expect(
-      await ethers.provider.getBalance(await vault.getAddress())
-    ).to.equal(0n);
+    const faucetBefore = await ethers.provider.getBalance(faucet.address);
+    await vault.connect(caller).releaseFaucetIfNeeded();
+    const faucetAfter = await ethers.provider.getBalance(faucet.address);
+
+    expect(faucetAfter - faucetBefore).to.equal(ethers.parseEther("0.6"));
+    expect(await vault.faucetPending()).to.equal(0n);
   });
 
-  it("Should respect cooldowns for auto-refill decisions", async function () {
-    const [deployer, caller] = await ethers.getSigners();
+  it("Should respect cooldowns for treasury refill decisions", async function () {
+    const [deployer, faucet, caller] = await ethers.getSigners();
     const treasury = await deployTreasury("1");
-    const vault = await deployVault(treasury);
+    const vault = await deployVault(treasury, faucet.address);
 
     await deployer.sendTransaction({
       to: await vault.getAddress(),
       value: ethers.parseEther("10"),
     });
 
-    await vault.connect(caller).refillTreasuryIfNeeded();
+    await vault.connect(caller).rebalance();
     await treasury.withdrawTreasury(
       deployer.address,
       ethers.parseEther("4.5")
@@ -121,34 +146,36 @@ describe("RevenueVault", function () {
     expect(await vault.needsRefill()).to.equal(true);
   });
 
-  it("Should allow owner manual refill and revenue withdrawal", async function () {
-    const [deployer, outsider] = await ethers.getSigners();
+  it("Should allow owner manual actions and protect faucet reserves on withdrawal", async function () {
+    const [deployer, faucet, outsider] = await ethers.getSigners();
     const treasury = await deployTreasury("5");
-    const vault = await deployVault(treasury);
+    const vault = await deployVault(treasury, faucet.address);
 
     await deployer.sendTransaction({
       to: await vault.getAddress(),
       value: ethers.parseEther("3"),
     });
 
-    await vault.setAutoRefillEnabled(false);
-    expect(await vault.needsRefill()).to.equal(false);
+    await vault.syncRevenue();
+    expect(await vault.faucetPending()).to.equal(ethers.parseEther("0.9"));
 
     await expect(vault.connect(outsider).manualRefill(ethers.parseEther("1")))
       .to.be.revertedWith("Ownable: caller is not the owner");
 
-    await vault.manualRefill(ethers.parseEther("2"));
+    await vault.manualRefill(ethers.parseEther("1"));
     expect(
       await ethers.provider.getBalance(await treasury.getAddress())
-    ).to.equal(ethers.parseEther("7"));
+    ).to.equal(ethers.parseEther("6"));
+
+    await expect(
+      vault.withdrawRevenue(deployer.address, ethers.parseEther("1.2"))
+    ).to.be.revertedWith("reserved revenue");
 
     await vault.withdrawRevenue(deployer.address, ethers.parseEther("1"));
-    expect(
-      await ethers.provider.getBalance(await vault.getAddress())
-    ).to.equal(0n);
   });
 
-  it("Should validate refill policy parameters", async function () {
+  it("Should validate faucet and refill policy parameters", async function () {
+    const [faucet] = await ethers.getSigners();
     const treasury = await deployTreasury("1");
     const vaultFactory = (await ethers.getContractFactory(
       "RevenueVault"
@@ -157,6 +184,9 @@ describe("RevenueVault", function () {
     await expect(
       vaultFactory.deploy(
         await treasury.getAddress(),
+        faucet.address,
+        3000,
+        ethers.parseEther("0.5"),
         ethers.parseEther("6"),
         ethers.parseEther("5"),
         ethers.parseEther("1"),
@@ -164,7 +194,16 @@ describe("RevenueVault", function () {
       )
     ).to.be.revertedWith("bad threshold");
 
-    const vault = await deployVault(treasury);
+    const vault = await deployVault(treasury, faucet.address);
+    await expect(
+      vault.setFaucetConfig(
+        ethers.ZeroAddress,
+        3000,
+        ethers.parseEther("0.5"),
+        true
+      )
+    ).to.be.revertedWith("faucet=0");
+
     await expect(
       vault.setRefillPolicy(
         ethers.parseEther("1"),
