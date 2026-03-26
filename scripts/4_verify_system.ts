@@ -87,12 +87,12 @@ async function main() {
   console.log("   Address:", info.contracts.KnowledgeContent);
   console.log("   Owner:", contentOwner);
   console.log("   VotesContract:", votesContract);
-  console.log("   MinStakeToVote:", ethers.formatEther(minStakeToVote), "ETH");
+  console.log("   MinStakeToVote:", ethers.formatEther(minStakeToVote), "KC");
   console.log("   Treasury(bound):", contentTreasury);
 
   // Content 自己可能仍有余额（比如误转账），但奖励池以 Treasury 为准
   const contentBal = await ethers.provider.getBalance(info.contracts.KnowledgeContent);
-  console.log("   Balance (Content):", ethers.formatEther(contentBal), "ETH");
+  console.log("   Balance (Content):", ethers.formatEther(contentBal), "KC");
 
   // =========================================
   // 2️⃣ TreasuryNative 状态（奖励池核心）
@@ -103,11 +103,11 @@ async function main() {
 
   console.log("   Address:", info.contracts.TreasuryNative);
   console.log("   Owner:", treasuryOwner);
-  console.log("   Balance (Treasury):", ethers.formatEther(treasuryBal), "ETH");
+  console.log("   Balance (Treasury):", ethers.formatEther(treasuryBal), "KC");
 
   console.log("   EpochDuration:", (await treasury.epochDuration()).toString(), "秒");
-  console.log("   EpochBudget:", ethers.formatEther(await treasury.epochBudget()), "ETH");
-  console.log("   EpochSpent:", ethers.formatEther(await treasury.epochSpent()), "ETH");
+  console.log("   EpochBudget:", ethers.formatEther(await treasury.epochBudget()), "KC");
+  console.log("   EpochSpent:", ethers.formatEther(await treasury.epochSpent()), "KC");
   console.log("   EpochStart:", (await treasury.epochStart()).toString());
 
   const spenderOk = await treasury.isSpender(info.contracts.KnowledgeContent);
@@ -115,7 +115,7 @@ async function main() {
 
   // 任意展示一个 pendingRewards（deployer）用于检查读接口
   const pendingDeployer = await treasury.pendingRewards(deployer.address);
-  console.log("   PendingRewards(deployer):", ethers.formatEther(pendingDeployer), "ETH");
+  console.log("   PendingRewards(deployer):", ethers.formatEther(pendingDeployer), "KC");
 
   // =========================================
   // 3️⃣ Timelock 状态

@@ -59,17 +59,17 @@ async function main() {
   // const code = await ethers.provider.getCode(contentAddress);
   // console.log("Content code length:", code.length);
 
-  // 2. 充值Treasury (5 ETH)
-  console.log("💰 正在向 Treasury 充值 5 ETH...");
+  // 2. 充值Treasury (5 KC)
+  console.log("💰 正在向 Treasury 充值 5 KC...");
 
   const targetBalance = ethers.parseEther("5");
   const currentBalance = await ethers.provider.getBalance(treasuryAddress);
 
-  console.log("Treasury 当前余额:", ethers.formatEther(currentBalance), "ETH");
+  console.log("Treasury 当前余额:", ethers.formatEther(currentBalance), "KC");
 
   if (currentBalance < targetBalance) {
     const need = targetBalance - currentBalance;
-    console.log(`💰 正在向 Treasury 补齐余额：${ethers.formatEther(need)} ETH...`);
+    console.log(`💰 正在向 Treasury 补齐余额：${ethers.formatEther(need)} KC...`);
 
     const fundTx = await deployer.sendTransaction({
       to: treasuryAddress,
@@ -78,7 +78,7 @@ async function main() {
     await fundTx.wait();
     console.log("✅ Treasury 充值成功，交易哈希:", fundTx.hash);
   } else {
-    console.log("✅ 跳过充值：Treasury 余额已达到/超过 5 ETH");
+    console.log("✅ 跳过充值：Treasury 余额已达到/超过 5 KC");
   }
 
   // 3. setAntiSybil （Content）
@@ -92,7 +92,7 @@ async function main() {
 
   if (needAntiSybil) {
     console.log(
-      `🛡️ 设置 AntiSybil: votesContract=${nativeVotesAddress}, minStake=${ethers.formatEther(minStakeToVote)} ETH...`
+      `🛡️ 设置 AntiSybil: votesContract=${nativeVotesAddress}, minStake=${ethers.formatEther(minStakeToVote)} KC...`
     );
     const tx = await content.setAntiSybil(nativeVotesAddress, minStakeToVote);
     await tx.wait();

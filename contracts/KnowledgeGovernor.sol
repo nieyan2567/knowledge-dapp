@@ -6,7 +6,7 @@ pragma solidity ^0.8.20;
  * @dev 基于 OpenZeppelin Governor 的 DAO 合约
  *
  * 特点：
- * - 投票权来自 NativeVotes（原生币质押）
+ * - 投票权来自 NativeVotes（KC 质押）
  * - 提案需要达到 proposalThreshold（防止垃圾提案）
  * - 法定人数 quorumFraction（基于总质押）
  * - 使用 Timelock 延迟执行
@@ -32,7 +32,7 @@ contract KnowledgeGovernor is
         GovernorSettings(
             5,          // votingDelay: 5 block 投票开始前的等待时间（防止“投票前质押”）
             100,         // votingPeriod: 100 blocks 投票持续时间（约 20分钟，按链上出块速度调整）
-            10 ether    // proposalThreshold: 10 原生币质押 才能提交提案（防止垃圾提案）
+            10 ether    // proposalThreshold: 10 KC 质押才能提交提案（防止垃圾提案）
         )
         GovernorVotes(_token)
         GovernorVotesQuorumFraction(4) // 4% 法定人数

@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 /**
  * @title TreasuryNative
- * @dev 模块化金库（原生币）
+ * @dev 模块化金库（KC）
  *
  * 核心功能：
  * - 统一存放奖励资金

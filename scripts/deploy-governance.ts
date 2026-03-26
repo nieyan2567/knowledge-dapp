@@ -1,13 +1,15 @@
 import { ethers } from "hardhat";
 
 /**
- * 部署并完成 DeFi 风格治理绑定：
- * 1) RewardToken + KnowledgeContent（奖励发放业务）
- * 2) GovernanceToken（治理投票权）
- * 3) TimelockController（延迟执行）
- * 4) KnowledgeGovernor（提案/投票/计票）
- * 5) 把 KnowledgeContent.owner 转交给 Timelock（只允许 DAO 改规则）
- * 6) 配置 Timelock roles：PROPOSER_ROLE 交给 Governor；EXECUTOR_ROLE 允许所有人执行（真实常用）
+ * DEPRECATED
+ * 该脚本基于旧版 RewardToken / GovernanceToken 架构，已不再适用于当前项目。
+ * 请勿继续使用。
+ *
+ * 当前有效部署链路：
+ * 1) scripts/1_deploy_contracts.ts
+ * 2) scripts/2_initialize_system.ts
+ * 3) scripts/3_handover_ownership.ts
+ * 4) scripts/4_verify_system.ts
  */
 async function main() {
   const [deployer] = await ethers.getSigners();

@@ -36,7 +36,7 @@ async function main() {
   // --- 3) 部署 TreasuryNative (金库) ---
   console.log("📦 部署 TreasuryNative...");
   const epochDuration = 7 * 24 * 3600; // 7 天一个 epoch
-  const epochBudget = ethers.parseEther("100"); // 每个 epoch 预算 100 ETH（演示可改小）
+  const epochBudget = ethers.parseEther("100"); // 每个 epoch 预算 100 KC（演示可改小）
 
   const Treasury = await ethers.getContractFactory("TreasuryNative");
   const treasury = await Treasury.deploy(epochDuration, epochBudget);

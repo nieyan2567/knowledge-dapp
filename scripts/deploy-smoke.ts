@@ -1,10 +1,13 @@
 import { ethers } from "hardhat";
 
 /**
- * 最小部署验证：
- * - 读取部署者余额
- * - 部署 RewardToken
- * - 输出合约地址与交易 hash
+ * DEPRECATED
+ * 该脚本依赖旧版 RewardToken 合约，已不适用于当前项目。
+ * 请勿继续使用。
+ *
+ * 如需验证当前系统，请使用：
+ * - scripts/1_deploy_contracts.ts
+ * - scripts/4_verify_system.ts
  */
 async function main() {
   const [deployer] = await ethers.getSigners();

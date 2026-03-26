@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 /**
  * @title NativeVotes
- * @dev 原生币质押治理投票权（IVotes）——增强安全版
+ * @dev KC 质押治理投票权（IVotes）——增强安全版
  *
  * 修复点：
  * 1) deposit 后不立刻生效：需要等待 activationBlocks 后调用 activate() 才获得投票权（防“短期资金治理劫持”）
@@ -59,7 +59,7 @@ contract NativeVotes is IVotes, EIP712, ReentrancyGuard {
     // -------------------- 质押 / 激活 --------------------
 
     /**
-     * @notice 质押原生币（不会立刻获得投票权）
+     * @notice 质押 KC（不会立刻获得投票权）
      */
     function deposit() external payable nonReentrant {
         require(msg.value > 0, "deposit=0");
@@ -126,7 +126,7 @@ contract NativeVotes is IVotes, EIP712, ReentrancyGuard {
     }
 
     /**
-     * @notice 冷却期结束后提取原生币
+     * @notice 冷却期结束后提取 KC
      */
     function withdraw(uint256 amount) external nonReentrant {
         require(amount > 0, "amount=0");

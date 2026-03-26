@@ -92,7 +92,7 @@ async function setupGovernanceEnvironment(): Promise<GovernanceEnv> {
   await nativeVotes.connect(voter1).deposit({ value: ethers.parseEther("20") });
   // voter2: Medium power
   await nativeVotes.connect(voter2).deposit({ value: ethers.parseEther("10") });
-  // poorVoter: Low power (Cannot propose - assuming threshold is > 1 ETH)
+  // poorVoter: Low power (Cannot propose - assuming threshold is > 1 KC)
   await nativeVotes.connect(poorVoter).deposit({ value: ethers.parseEther("1") });
 
   await mineBlocks(1);
