@@ -60,6 +60,8 @@ async function main() {
   console.log("   NativeVotes.activationBlocks():", (await nativeVotes.activationBlocks()).toString());
   console.log("   KnowledgeContent.updateContent():", hasFunction(content, "updateContent"));
   console.log("   KnowledgeContent.deleteContent():", hasFunction(content, "deleteContent"));
+  console.log("   KnowledgeContent.contentVersionCount():", hasFunction(content, "contentVersionCount"));
+  console.log("   KnowledgeContent.getContentVersion():", hasFunction(content, "getContentVersion"));
   console.log("   TreasuryNative.totalPendingRewards():", hasFunction(treasury, "totalPendingRewards"));
   console.log("   Governor.timelock():", await governor.timelock());
   console.log("   Governor.token():", await governor.token());
@@ -88,11 +90,22 @@ async function main() {
 
   if (contentCount > 0n) {
     const latest = await content.contents(contentCount);
+    const versionCount = await content.contentVersionCount(contentCount);
     console.log("   LatestContent.id:", latest.id.toString());
     console.log("   LatestContent.author:", latest.author);
     console.log("   LatestContent.voteCount:", latest.voteCount.toString());
     console.log("   LatestContent.rewardAccrued:", latest.rewardAccrued);
     console.log("   LatestContent.deleted:", latest.deleted);
+    console.log("   LatestContent.latestVersion:", latest.latestVersion.toString());
+    console.log("   LatestContent.lastUpdatedAt:", latest.lastUpdatedAt.toString());
+    console.log("   LatestContent.versionCount:", versionCount.toString());
+
+    if (versionCount > 0n) {
+      const version = await content.getContentVersion(contentCount, versionCount);
+      console.log("   LatestVersion.ipfsHash:", version[0]);
+      console.log("   LatestVersion.title:", version[1]);
+      console.log("   LatestVersion.timestamp:", version[3].toString());
+    }
   }
 
   console.log("\nTreasuryNative state");

@@ -36,11 +36,22 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
         bool rewardAccrued;
         bool deleted;
+        uint256 latestVersion;
+        uint256 lastUpdatedAt;
+    }
+
+    struct ContentVersion {
+        string ipfsHash;
+        string title;
+        string description;
+        uint256 timestamp;
     }
 
     uint256 public contentCount;
 
     mapping(uint256 => Content) public contents;
+    mapping(uint256 => uint256) public contentVersionCount;
+    mapping(uint256 => mapping(uint256 => ContentVersion)) private contentVersions;
 
     mapping(address => mapping(uint256 => bool)) public hasVoted;
 
@@ -67,6 +78,14 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     event ContentUpdated(
         uint256 indexed id,
         address indexed author,
+        string ipfsHash,
+        string title,
+        string description
+    );
+
+    event ContentVersionStored(
+        uint256 indexed id,
+        uint256 indexed version,
         string ipfsHash,
         string title,
         string description
@@ -183,12 +202,29 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
             timestamp: block.timestamp,
 
             rewardAccrued: false,
-            deleted: false
+            deleted: false,
+            latestVersion: 1,
+            lastUpdatedAt: block.timestamp
+        });
+
+        contentVersionCount[contentCount] = 1;
+        contentVersions[contentCount][1] = ContentVersion({
+            ipfsHash: _ipfsHash,
+            title: _title,
+            description: _description,
+            timestamp: block.timestamp
         });
 
         emit ContentRegistered(
             contentCount,
             msg.sender,
+            _ipfsHash,
+            _title,
+            _description
+        );
+        emit ContentVersionStored(
+            contentCount,
+            1,
             _ipfsHash,
             _title,
             _description
@@ -213,13 +249,32 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         require(c.voteCount == 0, "already voted");
         require(!c.rewardAccrued, "reward already accrued");
 
+        uint256 nextVersion = contentVersionCount[contentId] + 1;
+
+        contentVersionCount[contentId] = nextVersion;
+        contentVersions[contentId][nextVersion] = ContentVersion({
+            ipfsHash: _ipfsHash,
+            title: _title,
+            description: _description,
+            timestamp: block.timestamp
+        });
+
         c.ipfsHash = _ipfsHash;
         c.title = _title;
         c.description = _description;
+        c.latestVersion = nextVersion;
+        c.lastUpdatedAt = block.timestamp;
 
         emit ContentUpdated(
             contentId,
             msg.sender,
+            _ipfsHash,
+            _title,
+            _description
+        );
+        emit ContentVersionStored(
+            contentId,
+            nextVersion,
             _ipfsHash,
             _title,
             _description
@@ -247,6 +302,29 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         c.deleted = true;
 
         emit ContentDeleted(contentId, msg.sender, c.author);
+    }
+
+    function getContentVersion(
+        uint256 contentId,
+        uint256 version
+    )
+        external
+        view
+        returns (
+            string memory ipfsHash,
+            string memory title,
+            string memory description,
+            uint256 timestamp
+        )
+    {
+        require(contentId > 0 && contentId <= contentCount, "bad id");
+        require(
+            version > 0 && version <= contentVersionCount[contentId],
+            "bad version"
+        );
+
+        ContentVersion storage v = contentVersions[contentId][version];
+        return (v.ipfsHash, v.title, v.description, v.timestamp);
     }
 
     function vote(uint256 contentId) external whenNotPaused {
