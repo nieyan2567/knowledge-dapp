@@ -121,6 +121,31 @@ describe("RevenueVault", function () {
     expect(await vault.faucetPending()).to.equal(0n);
   });
 
+  it("Should let rebalance succeed when only faucet payout is needed", async function () {
+    const [deployer, faucet, caller] = await ethers.getSigners();
+    const treasury = await deployTreasury("5");
+    const vault = await deployVault(treasury, faucet.address);
+
+    await deployer.sendTransaction({
+      to: await vault.getAddress(),
+      value: ethers.parseEther("2"),
+    });
+
+    expect(await vault.needsFaucetPayout()).to.equal(true);
+    expect(await vault.needsRefill()).to.equal(false);
+
+    const faucetBefore = await ethers.provider.getBalance(faucet.address);
+    const tx = await vault.connect(caller).rebalance();
+    await tx.wait();
+    const faucetAfter = await ethers.provider.getBalance(faucet.address);
+
+    expect(faucetAfter - faucetBefore).to.equal(ethers.parseEther("0.6"));
+    expect(await vault.faucetPending()).to.equal(0n);
+    expect(
+      await ethers.provider.getBalance(await treasury.getAddress())
+    ).to.equal(ethers.parseEther("5"));
+  });
+
   it("Should respect cooldowns for treasury refill decisions", async function () {
     const [deployer, faucet, caller] = await ethers.getSigners();
     const treasury = await deployTreasury("1");

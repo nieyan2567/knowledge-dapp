@@ -233,7 +233,7 @@ contract RevenueVault is Ownable, Pausable, ReentrancyGuard {
         _syncRevenue();
 
         faucetAmount = _releaseFaucetIfNeeded();
-        treasuryAmount = _refillTreasuryIfNeeded();
+        treasuryAmount = _tryRefillTreasury();
     }
 
     function refillTreasuryIfNeeded()
@@ -392,6 +392,19 @@ contract RevenueVault is Ownable, Pausable, ReentrancyGuard {
 
         amount = maxRefillAmount();
         require(amount >= minRefillAmount, "refill too small");
+
+        _transferToTreasury(amount);
+    }
+
+    function _tryRefillTreasury() internal returns (uint256 amount) {
+        if (!needsRefill()) {
+            return 0;
+        }
+
+        amount = maxRefillAmount();
+        if (amount < minRefillAmount) {
+            return 0;
+        }
 
         _transferToTreasury(amount);
     }

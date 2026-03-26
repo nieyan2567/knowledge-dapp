@@ -69,7 +69,7 @@ Current deployment defaults:
 - default revenue vault minimum refill size: `1 KC`
 - default revenue vault refill cooldown: `1 hour`
 - default faucet share: `30%`
-- default faucet wallet: `0xc1566E4E8BA76512537879887F8375C339815bBb`
+- faucet wallet: loaded from `FAUCET_WALLET` in `.env`
 - default minimum faucet payout: `0.5 KC`
 
 Effective reward capacity is the smaller of:
@@ -145,6 +145,7 @@ Configure environment variables in `.env` as needed:
 - `BESU_RPC_URL`
 - `BESU_CHAIN_ID`
 - `DEPLOYER_PRIVATE_KEY`
+- `FAUCET_WALLET`
 
 Then run:
 
