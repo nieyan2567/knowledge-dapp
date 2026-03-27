@@ -101,6 +101,12 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         address indexed author
     );
 
+    event ContentRestored(
+        uint256 indexed id,
+        address indexed operator,
+        address indexed author
+    );
+
     event RewardRulesUpdated(uint256 minVotesToReward, uint256 rewardPerVote);
 
     event AntiSybilUpdated(address votesContract, uint256 minStakeToVote);
@@ -350,6 +356,24 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         c.deleted = true;
 
         emit ContentDeleted(contentId, msg.sender, c.author);
+    }
+
+    function restoreContent(uint256 contentId) external whenNotPaused {
+
+        require(contentId > 0 && contentId <= contentCount, "bad id");
+
+        Content storage c = contents[contentId];
+
+        require(c.deleted, "not deleted");
+
+        bool isAuthor = c.author == msg.sender;
+        bool isOwnerCaller = owner() == msg.sender;
+
+        require(isAuthor || isOwnerCaller, "not authorized");
+
+        c.deleted = false;
+
+        emit ContentRestored(contentId, msg.sender, c.author);
     }
 
     function getContentVersion(

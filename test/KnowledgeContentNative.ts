@@ -266,6 +266,68 @@ describe("KnowledgeContent (Treasury Native + Metadata)", function () {
     );
   });
 
+  it("Should allow author to restore deleted content and resume actions", async function () {
+    const [deployer, author] = await ethers.getSigners();
+
+    const nativeVotesFactory = (await ethers.getContractFactory(
+      "NativeVotes"
+    )) as unknown as NativeVotes__factory;
+    const nativeVotes: NativeVotes = await nativeVotesFactory.deploy(1, 1);
+    await nativeVotes.waitForDeployment();
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await content.setAntiSybil(
+      await nativeVotes.getAddress(),
+      ethers.parseEther("1")
+    );
+
+    await content.connect(author).registerContent("QmHash", "Title", "Desc");
+    await content.connect(author).deleteContent(1);
+
+    await expect(content.connect(author).restoreContent(1))
+      .to.emit(content, "ContentRestored")
+      .withArgs(1, author.address, author.address);
+
+    expect((await content.contents(1)).deleted).to.equal(false);
+
+    const voter = ethers.Wallet.createRandom().connect(ethers.provider);
+    await deployer.sendTransaction({
+      to: voter.address,
+      value: ethers.parseEther("2"),
+    });
+    await nativeVotes.connect(voter).deposit({ value: ethers.parseEther("1") });
+    await mineBlocks(1);
+    await nativeVotes.connect(voter).activate();
+
+    await expect(content.connect(voter).vote(1))
+      .to.emit(content, "Voted")
+      .withArgs(1, voter.address);
+  });
+
+  it("Should allow owner to restore moderated content", async function () {
+    const [deployer, author] = await ethers.getSigners();
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await content.connect(author).registerContent("QmHash", "Title", "Desc");
+    await content.connect(deployer).deleteContent(1);
+
+    await expect(content.connect(deployer).restoreContent(1))
+      .to.emit(content, "ContentRestored")
+      .withArgs(1, deployer.address, author.address);
+
+    expect((await content.contents(1)).deleted).to.equal(false);
+  });
+
   it("Should allow author to delete voted content when policy enables it", async function () {
     const [deployer, author] = await ethers.getSigners();
 
