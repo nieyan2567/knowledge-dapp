@@ -79,6 +79,7 @@ async function setupGovernanceEnvironment(): Promise<GovernanceEnv> {
   await governor.waitForDeployment();
 
   // 6. Handover ownership to timelock
+  await nativeVotes.transferOwnership(await timelock.getAddress());
   await content.transferOwnership(await timelock.getAddress());
   await treasury.transferOwnership(await timelock.getAddress());
 
@@ -169,22 +170,31 @@ describe("Governance Flow & Edge Cases", function () {
   });
   
   // === 测试 1: 正常流程 (Happy Path) ===
-  it("should update reward rules AND treasury budget via propose -> vote -> queue -> execute", async function () {
+  it("should update reward rules, treasury budget, and native vote timings via propose -> vote -> queue -> execute", async function () {
     const env = await setupGovernanceEnvironment();
-    const { voter1, voter2, governor, content, treasury, minDelay } = env;
+    const { voter1, voter2, governor, nativeVotes, content, treasury, minDelay } = env;
 
     const newMinVotes = 5n;
     const newRewardPerVote = ethers.parseEther("0.002");
     const newEpochDuration = 3600n;
     const newEpochBudget = ethers.parseEther("200");
+    const newCooldownSeconds = 7200n;
+    const newActivationBlocks = 20n;
 
     const calldata1 = content.interface.encodeFunctionData("setRewardRules", [newMinVotes, newRewardPerVote]);
     const calldata2 = treasury.interface.encodeFunctionData("setBudget", [newEpochDuration, newEpochBudget]);
+    const calldata3 = nativeVotes.interface.encodeFunctionData("setCooldownSeconds", [newCooldownSeconds]);
+    const calldata4 = nativeVotes.interface.encodeFunctionData("setActivationBlocks", [newActivationBlocks]);
 
-    const targets = [await content.getAddress(), await treasury.getAddress()];
-    const values = [0, 0];
-    const calldatas = [calldata1, calldata2];
-    const description = "Proposal: update reward rules + treasury budget";
+    const targets = [
+      await content.getAddress(),
+      await treasury.getAddress(),
+      await nativeVotes.getAddress(),
+      await nativeVotes.getAddress(),
+    ];
+    const values = [0, 0, 0, 0];
+    const calldatas = [calldata1, calldata2, calldata3, calldata4];
+    const description = "Proposal: update reward rules + treasury budget + native vote timings";
     const descriptionHash = ethers.id(description);
 
     // Propose
@@ -217,6 +227,8 @@ describe("Governance Flow & Edge Cases", function () {
     expect(await content.rewardPerVote()).to.equal(newRewardPerVote);
     expect(await treasury.epochDuration()).to.equal(newEpochDuration);
     expect(await treasury.epochBudget()).to.equal(newEpochBudget);
+    expect(await nativeVotes.cooldownSeconds()).to.equal(newCooldownSeconds);
+    expect(await nativeVotes.activationBlocks()).to.equal(newActivationBlocks);
   });
 
   // === 测试 2: 覆盖 Proposal Threshold (针对 poorVoter) ===

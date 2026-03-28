@@ -1,21 +1,23 @@
-import { ethers } from "hardhat";
+﻿import { ethers } from "hardhat";
 import * as readline from "readline";
+
 import { loadDeployment } from "./utils/deployments";
 import {
   KnowledgeContent,
+  NativeVotes,
   RevenueVault,
   TimelockController,
   TreasuryNative,
 } from "../typechain-types";
 
 async function confirmOrExit() {
-  console.log("⚠️  警告：即将执行权限移交操作，此操作不可逆！");
+  console.log("⚠️  即将执行所有权移交流程，此操作不可逆。");
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   await new Promise<void>((resolve) => {
-    rl.question("确认要继续吗？(输入 y 继续): ", (answer) => {
+    rl.question("确认继续吗？输入 y 继续: ", (answer) => {
       if (answer.toLowerCase() !== "y" && answer.toLowerCase() !== "") {
-        console.log("❌ 操作已取消");
+        console.log("已取消操作。");
         process.exit(0);
       }
       resolve();
@@ -27,10 +29,10 @@ async function confirmOrExit() {
 
 async function main() {
   await confirmOrExit();
-  console.log("🔄 开始权限移交流程...");
+  console.log("开始执行所有权移交流程...");
 
   const info = await loadDeployment();
-
+  const nativeVotesAddress = info.contracts.NativeVotes;
   const contentAddress = info.contracts.KnowledgeContent;
   const treasuryAddress = info.contracts.TreasuryNative;
   const revenueVaultAddress = info.contracts.RevenueVault;
@@ -39,143 +41,138 @@ async function main() {
 
   const [deployer] = await ethers.getSigners();
 
-  const ContentFactory = await ethers.getContractFactory("KnowledgeContent");
-  const content = ContentFactory.attach(contentAddress) as KnowledgeContent;
-
-  const TreasuryFactory = await ethers.getContractFactory("TreasuryNative");
-  const treasury = TreasuryFactory.attach(treasuryAddress) as TreasuryNative;
-
-  const RevenueVaultFactory = await ethers.getContractFactory("RevenueVault");
-  const revenueVault = RevenueVaultFactory.attach(
+  const nativeVotes = (await (await ethers.getContractFactory("NativeVotes")).attach(
+    nativeVotesAddress
+  )) as NativeVotes;
+  const content = (await (await ethers.getContractFactory("KnowledgeContent")).attach(
+    contentAddress
+  )) as KnowledgeContent;
+  const treasury = (await (await ethers.getContractFactory("TreasuryNative")).attach(
+    treasuryAddress
+  )) as TreasuryNative;
+  const revenueVault = (await (await ethers.getContractFactory("RevenueVault")).attach(
     revenueVaultAddress
-  ) as RevenueVault;
+  )) as RevenueVault;
+  const timelock = (await (await ethers.getContractFactory("TimelockController")).attach(
+    timelockAddress
+  )) as TimelockController;
 
-  const TimelockFactory = await ethers.getContractFactory("TimelockController");
-  const timelock = TimelockFactory.attach(timelockAddress) as TimelockController;
-
-  // 1) 验证 content / treasury / revenueVault owner 仍是 deployer
+  const nativeVotesOwner = await nativeVotes.owner();
   const contentOwner = await content.owner();
   const treasuryOwner = await treasury.owner();
   const revenueVaultOwner = await revenueVault.owner();
 
-  console.log("Content 当前 Owner:", contentOwner);
-  console.log("Treasury 当前 Owner:", treasuryOwner);
-  console.log("RevenueVault 当前 Owner:", revenueVaultOwner);
-  console.log("当前脚本运行者:", deployer.address);
+  console.log("NativeVotes owner:", nativeVotesOwner);
+  console.log("KnowledgeContent owner:", contentOwner);
+  console.log("TreasuryNative owner:", treasuryOwner);
+  console.log("RevenueVault owner:", revenueVaultOwner);
+  console.log("Current deployer:", deployer.address);
 
+  if (nativeVotesOwner.toLowerCase() !== deployer.address.toLowerCase()) {
+    throw new Error(`NativeVotes owner mismatch before handover: ${nativeVotesOwner}`);
+  }
   if (contentOwner.toLowerCase() !== deployer.address.toLowerCase()) {
-    throw new Error(`❌ Deployer 不再是 Content 的 Owner (当前: ${contentOwner})`);
+    throw new Error(`Content owner mismatch before handover: ${contentOwner}`);
   }
   if (treasuryOwner.toLowerCase() !== deployer.address.toLowerCase()) {
-    throw new Error(`❌ Deployer 不再是 Treasury 的 Owner (当前: ${treasuryOwner})`);
+    throw new Error(`Treasury owner mismatch before handover: ${treasuryOwner}`);
   }
   if (revenueVaultOwner.toLowerCase() !== deployer.address.toLowerCase()) {
-    throw new Error(`❌ Deployer 不再是 RevenueVault 的 Owner (当前: ${revenueVaultOwner})`);
+    throw new Error(`RevenueVault owner mismatch before handover: ${revenueVaultOwner}`);
   }
 
-  // 2) 验证 timelock admin（OZ 4.9.x：TIMELOCK_ADMIN_ROLE）
   const PROPOSER_ROLE = await timelock.PROPOSER_ROLE();
   const CANCELLER_ROLE = await timelock.CANCELLER_ROLE();
   const TIMELOCK_ADMIN_ROLE = await timelock.TIMELOCK_ADMIN_ROLE();
 
   const isTimelockAdmin = await timelock.hasRole(TIMELOCK_ADMIN_ROLE, deployer.address);
-  console.log("Timelock 地址:", timelockAddress);
-  console.log("Deployer is TimelockAdmin?", isTimelockAdmin);
+  console.log("Timelock:", timelockAddress);
+  console.log("Deployer is Timelock admin:", isTimelockAdmin);
 
   if (!isTimelockAdmin) {
     throw new Error(
       [
-        "❌ 当前 signer 不是 Timelock TIMELOCK_ADMIN_ROLE，无法 grant/revoke role。",
-        "如果你已经 renounce 掉 admin，就无法修复权限，只能重部署。",
-      ].join("\n")
+        "Current signer is not Timelock admin.",
+        "If admin has already been renounced, you need to redeploy the system.",
+      ].join(" ")
     );
   }
 
-  // (可选安全检查) Governor 不应该是 TimelockAdmin
-  const govAdmin = await timelock.hasRole(TIMELOCK_ADMIN_ROLE, governorAddress);
-  if (govAdmin) {
-    throw new Error("❌ 验证失败：Governor 不应该是 Timelock Admin");
+  const governorIsAdmin = await timelock.hasRole(TIMELOCK_ADMIN_ROLE, governorAddress);
+  if (governorIsAdmin) {
+    throw new Error("Governor should not hold Timelock admin role");
   }
 
-  console.log("✅ 权限验证通过");
+  console.log("Ownership pre-check passed.");
 
-  // 3) 将 Content Owner 移交给 Timelock
-  console.log("🔑 转移 KnowledgeContent 所有权给 Timelock...");
+  const nativeVotesTx = await nativeVotes.transferOwnership(timelockAddress);
+  await nativeVotesTx.wait();
+  console.log("NativeVotes ownership transferred:", nativeVotesTx.hash);
+
   const contentTx = await content.transferOwnership(timelockAddress);
   await contentTx.wait();
-  console.log("✅ 所有权转移成功，交易哈希:", contentTx.hash);
+  console.log("KnowledgeContent ownership transferred:", contentTx.hash);
 
-  // 4) Treasury owner -> Timelock
-  console.log("🏦 转移 Treasury 所有权给 Timelock...");
   const treasuryTx = await treasury.transferOwnership(timelockAddress);
   await treasuryTx.wait();
-  console.log("✅ Treasury 所有权转移成功:", treasuryTx.hash);
+  console.log("TreasuryNative ownership transferred:", treasuryTx.hash);
 
-  // 5) RevenueVault owner -> Timelock
-  console.log("💰 转移 RevenueVault 所有权给 Timelock...");
   const revenueVaultTx = await revenueVault.transferOwnership(timelockAddress);
   await revenueVaultTx.wait();
-  console.log("✅ RevenueVault 所有权转移成功:", revenueVaultTx.hash);
+  console.log("RevenueVault ownership transferred:", revenueVaultTx.hash);
 
-  // 6) 将 Timelock PROPOSER_ROLE 授予 Governor
-  console.log("🏛️ 授权 Governor 为 Timelock Proposer...");
   const grantTx = await timelock.grantRole(PROPOSER_ROLE, governorAddress);
   await grantTx.wait();
-  console.log("✅ 授权成功，交易哈希:", grantTx.hash);
+  console.log("Granted Timelock proposer role to Governor:", grantTx.hash);
 
-  // 7) 撤销 Deployer 的 PROPOSER_ROLE
-  console.log("🚫 撤销 Deployer 的 Proposer 权限...");
-  const revokeTx = await timelock.revokeRole(PROPOSER_ROLE, deployer.address);
-  await revokeTx.wait();
-  console.log("✅ 撤销成功，交易哈希:", revokeTx.hash);
+  const revokeProposerTx = await timelock.revokeRole(PROPOSER_ROLE, deployer.address);
+  await revokeProposerTx.wait();
+  console.log("Revoked proposer role from deployer:", revokeProposerTx.hash);
 
-  // 8) 撤销 Deployer 的 CANCELLER_ROLE（按你要求：不授予 Governor）
-  console.log("🚫 正在撤销 Deployer 的 Canceller 权限（不授予 Governor）...");
-  const revokeCancelTx = await timelock.revokeRole(CANCELLER_ROLE, deployer.address);
-  await revokeCancelTx.wait();
-  console.log("✅ 撤销成功，交易哈希:", revokeCancelTx.hash);
+  const revokeCancellerTx = await timelock.revokeRole(CANCELLER_ROLE, deployer.address);
+  await revokeCancellerTx.wait();
+  console.log("Revoked canceller role from deployer:", revokeCancellerTx.hash);
 
-  // 9) 最终去中心化：deployer 放弃 Timelock Admin
-  console.log("🧨 Deployer 放弃 Timelock Admin（TIMELOCK_ADMIN_ROLE，最终去中心化）...");
   const renounceTx = await timelock.renounceRole(TIMELOCK_ADMIN_ROLE, deployer.address);
   await renounceTx.wait();
-  console.log("✅ renounce 成功:", renounceTx.hash);
+  console.log("Deployer renounced Timelock admin:", renounceTx.hash);
 
-  // 10) 最终验证
+  const newNativeVotesOwner = await nativeVotes.owner();
   const newContentOwner = await content.owner();
   const newTreasuryOwner = await treasury.owner();
   const newRevenueVaultOwner = await revenueVault.owner();
 
+  if (newNativeVotesOwner.toLowerCase() !== timelockAddress.toLowerCase()) {
+    throw new Error("NativeVotes owner was not transferred to Timelock");
+  }
   if (newContentOwner.toLowerCase() !== timelockAddress.toLowerCase()) {
-    throw new Error("❌ 验证失败：Content Owner 未更新为 Timelock");
+    throw new Error("KnowledgeContent owner was not transferred to Timelock");
   }
   if (newTreasuryOwner.toLowerCase() !== timelockAddress.toLowerCase()) {
-    throw new Error("❌ 验证失败：Treasury Owner 未更新为 Timelock");
+    throw new Error("TreasuryNative owner was not transferred to Timelock");
   }
   if (newRevenueVaultOwner.toLowerCase() !== timelockAddress.toLowerCase()) {
-    throw new Error("❌ 验证失败：RevenueVault Owner 未更新为 Timelock");
+    throw new Error("RevenueVault owner was not transferred to Timelock");
   }
 
   const governorProposer = await timelock.hasRole(PROPOSER_ROLE, governorAddress);
   const deployerProposer = await timelock.hasRole(PROPOSER_ROLE, deployer.address);
-
   const deployerStillAdmin = await timelock.hasRole(TIMELOCK_ADMIN_ROLE, deployer.address);
   const governorStillAdmin = await timelock.hasRole(TIMELOCK_ADMIN_ROLE, governorAddress);
-
   const deployerCanceller = await timelock.hasRole(CANCELLER_ROLE, deployer.address);
   const governorCanceller = await timelock.hasRole(CANCELLER_ROLE, governorAddress);
 
-  if (!governorProposer) throw new Error("❌ 验证失败：Governor 未获得 Proposer");
-  if (deployerProposer) throw new Error("❌ 验证失败：Deployer 仍是 Proposer");
+  if (!governorProposer) throw new Error("Governor did not receive proposer role");
+  if (deployerProposer) throw new Error("Deployer still has proposer role");
+  if (deployerStillAdmin) throw new Error("Deployer still has Timelock admin role");
+  if (governorStillAdmin) throw new Error("Governor should not have Timelock admin role");
+  if (deployerCanceller) throw new Error("Deployer still has canceller role");
+  if (governorCanceller) throw new Error("Governor should not have canceller role");
 
-  if (deployerStillAdmin) throw new Error("❌ 验证失败：Deployer 仍是 TimelockAdmin（renounce 未生效）");
-  if (governorStillAdmin) throw new Error("❌ 验证失败：Governor 不应是 TimelockAdmin");
-
-  if (deployerCanceller) throw new Error("❌ 验证失败：Deployer 仍是 Canceller");
-  if (governorCanceller) throw new Error("❌ 验证失败：Governor 不应是 Canceller（按当前策略）");
-
-  console.log("✅ 所有最终验证通过");
-  console.log("\n🎉 第三阶段完成：Content/Treasury/RevenueVault 已移交给 Timelock（EOA 无后门权限）。");
+  console.log("All ownership and role checks passed.");
+  console.log(
+    "NativeVotes / KnowledgeContent / TreasuryNative / RevenueVault have been handed over to Timelock."
+  );
 }
 
 main().catch((error) => {

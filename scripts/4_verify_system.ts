@@ -62,6 +62,8 @@ async function main() {
   console.log("\nABI surface");
   console.log("   NativeVotes.cooldownSeconds():", (await nativeVotes.cooldownSeconds()).toString());
   console.log("   NativeVotes.activationBlocks():", (await nativeVotes.activationBlocks()).toString());
+  console.log("   NativeVotes.setCooldownSeconds():", hasFunction(nativeVotes, "setCooldownSeconds"));
+  console.log("   NativeVotes.setActivationBlocks():", hasFunction(nativeVotes, "setActivationBlocks"));
   console.log("   KnowledgeContent.updateContent():", hasFunction(content, "updateContent"));
   console.log("   KnowledgeContent.deleteContent():", hasFunction(content, "deleteContent"));
   console.log("   KnowledgeContent.setContentPolicy():", hasFunction(content, "setContentPolicy"));
@@ -231,6 +233,8 @@ async function main() {
   console.log("   Quorum @ latest block:", (await governor.quorum((await ethers.provider.getBlockNumber()) - 1)).toString());
 
   console.log("\nSafety summary");
+  const nativeVotesOwner = await nativeVotes.owner();
+  const nativeVotesOwnerIsTimelock = eqAddr(nativeVotesOwner, info.contracts.TimelockController);
   const contentOwnerIsTimelock = eqAddr(contentOwner, info.contracts.TimelockController);
   const treasuryOwnerIsTimelock = eqAddr(treasuryOwner, info.contracts.TimelockController);
   const revenueVaultOwnerIsTimelock = eqAddr(revenueVaultOwner, info.contracts.TimelockController);
@@ -241,6 +245,7 @@ async function main() {
   );
   const govTimelockOk = eqAddr(govTimelock, info.contracts.TimelockController);
 
+  console.log("   NativeVotes owner == Timelock:", nativeVotesOwnerIsTimelock);
   console.log("   Content owner == Timelock:", contentOwnerIsTimelock);
   console.log("   Treasury owner == Timelock:", treasuryOwnerIsTimelock);
   console.log("   RevenueVault owner == Timelock:", revenueVaultOwnerIsTimelock);
@@ -250,6 +255,9 @@ async function main() {
   console.log("   Governor.timelock == TimelockController:", govTimelockOk);
   console.log("   Treasury balance >= reserved rewards:", treasuryCoversPending);
 
+  if (!nativeVotesOwnerIsTimelock) {
+    console.log("   WARN NativeVotes owner is not Timelock.");
+  }
   if (!contentOwnerIsTimelock) {
     console.log("   WARN Content owner is not Timelock.");
   }

@@ -12,17 +12,18 @@ pragma solidity ^0.8.20;
  */
 
 import "@openzeppelin/contracts/governance/utils/IVotes.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Checkpoints.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract NativeVotes is IVotes, EIP712, ReentrancyGuard {
+contract NativeVotes is IVotes, Ownable, EIP712, ReentrancyGuard {
     using Checkpoints for Checkpoints.Trace224;
 
     // ======= 参数（可按联盟链需求调整，也可做成 DAO 可治理） =======
-    uint256 public immutable cooldownSeconds;     // 退出冷却期（秒）
-    uint256 public immutable activationBlocks;    // 投票权激活延迟（区块数）
+    uint256 public cooldownSeconds;     // 退出冷却期（秒）
+    uint256 public activationBlocks;    // 投票权激活延迟（区块数）
 
     // ======= 余额与状态 =======
     mapping(address => uint256) public staked;            // 已激活质押（有投票权）
@@ -47,13 +48,38 @@ contract NativeVotes is IVotes, EIP712, ReentrancyGuard {
     event Activated(address indexed user, uint256 amount);
     event WithdrawRequested(address indexed user, uint256 amount, uint256 withdrawAfterTime);
     event Withdrawn(address indexed user, uint256 amount);
+    event CooldownSecondsUpdated(uint256 oldCooldownSeconds, uint256 newCooldownSeconds);
+    event ActivationBlocksUpdated(uint256 oldActivationBlocks, uint256 newActivationBlocks);
 
     constructor(
         uint256 _cooldownSeconds,
         uint256 _activationBlocks
     ) EIP712("NativeVotes", "2") {
+        require(_cooldownSeconds > 0, "cooldown=0");
+        require(_activationBlocks > 0, "activation=0");
+
         cooldownSeconds = _cooldownSeconds;     // 例如 3600（1小时）/ 86400（1天）
         activationBlocks = _activationBlocks;   // 例如 10/50
+    }
+
+    // -------------------- Admin / DAO --------------------
+
+    function setCooldownSeconds(uint256 newCooldownSeconds) external onlyOwner {
+        require(newCooldownSeconds > 0, "cooldown=0");
+
+        uint256 oldCooldownSeconds = cooldownSeconds;
+        cooldownSeconds = newCooldownSeconds;
+
+        emit CooldownSecondsUpdated(oldCooldownSeconds, newCooldownSeconds);
+    }
+
+    function setActivationBlocks(uint256 newActivationBlocks) external onlyOwner {
+        require(newActivationBlocks > 0, "activation=0");
+
+        uint256 oldActivationBlocks = activationBlocks;
+        activationBlocks = newActivationBlocks;
+
+        emit ActivationBlocksUpdated(oldActivationBlocks, newActivationBlocks);
     }
 
     // -------------------- 质押 / 激活 --------------------

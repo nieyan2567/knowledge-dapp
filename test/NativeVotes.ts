@@ -10,6 +10,39 @@ async function mineBlocks(n: number) {
 }
 
 describe("NativeVotes", function () {
+  it("Should allow owner to update cooldown and activation settings", async function () {
+    const [owner] = await ethers.getSigners();
+    const factory = (await ethers.getContractFactory("NativeVotes")) as unknown as NativeVotes__factory;
+    const nv = await factory.deploy(3600, 10);
+    await nv.waitForDeployment();
+
+    await expect(nv.connect(owner).setCooldownSeconds(7200))
+      .to.emit(nv, "CooldownSecondsUpdated")
+      .withArgs(3600, 7200);
+    await expect(nv.connect(owner).setActivationBlocks(25))
+      .to.emit(nv, "ActivationBlocksUpdated")
+      .withArgs(10, 25);
+
+    expect(await nv.cooldownSeconds()).to.equal(7200n);
+    expect(await nv.activationBlocks()).to.equal(25n);
+  });
+
+  it("Should reject non-owner updates to governance settings", async function () {
+    const [owner, user] = await ethers.getSigners();
+    const factory = (await ethers.getContractFactory("NativeVotes")) as unknown as NativeVotes__factory;
+    const nv = await factory.deploy(3600, 10);
+    await nv.waitForDeployment();
+
+    await expect(nv.connect(user).setCooldownSeconds(7200)).to.be.revertedWith(
+      "Ownable: caller is not the owner"
+    );
+    await expect(nv.connect(user).setActivationBlocks(25)).to.be.revertedWith(
+      "Ownable: caller is not the owner"
+    );
+
+    expect(await nv.owner()).to.equal(owner.address);
+  });
+
   it("Should increase voting power only after activate()", async function () {
     const [user] = await ethers.getSigners();
 
