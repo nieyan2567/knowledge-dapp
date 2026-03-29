@@ -6,10 +6,10 @@ pragma solidity ^0.8.20;
  * @notice 内容登记、版本管理、社区投票与奖励记账合约。
  * @dev
  * 设计目标：
- * 1. 允许作者登记内容的基础元数据，并把正文内容通过 IPFS 等链下存储保存。
- * 2. 允许符合门槛的地址对内容投票，并记录单个地址是否已经投过票。
- * 3. 支持作者在内容尚未进入锁定状态前更新内容，并保留历史版本。
- * 4. 当内容满足奖励条件时，由本合约向 Treasury 发起奖励记账请求。
+ * 1. 允许作者登记内容的基础元数据，并将正文通过 IPFS 等链下存储保存。
+ * 2. 允许满足门槛的地址对内容投票，并记录是否重复投票。
+ * 3. 支持作者在内容未进入锁定状态前更新内容，并保留历史版本。
+ * 4. 当内容满足奖励条件时，由作者触发向 Treasury 进行奖励记账。
  */
 
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -18,7 +18,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /**
  * @notice 投票权合约的最小接口。
- * @dev 当前只依赖 `getVotes` 用于查询地址的治理投票权或质押权重。
+ * @dev 当前只依赖 `getVotes` 查询地址的治理投票权或质押权重。
  */
 interface IVotesLike {
     /**
@@ -44,57 +44,52 @@ interface ITreasuryNative {
     /**
      * @notice 查询指定地址当前待领取的奖励金额。
      * @param beneficiary 奖励接收人地址。
-     * @return 该地址当前累计但尚未领取的奖励金额。
+     * @return 该地址当前尚未领取的奖励金额。
      */
     function pendingRewards(address beneficiary) external view returns (uint256);
-
 }
 
 contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     /**
      * @notice 内容主记录。
-     * @dev 该结构体保存当前最新版本对应的展示字段，以及投票和奖励状态。
+     * @dev 保存当前最新版本的展示字段，以及投票和奖励状态。
+     * @param id 内容唯一编号。
+     * @param author 内容作者地址。
+     * @param ipfsHash 当前最新版本对应的链下内容哈希。
+     * @param title 当前最新版本标题。
+     * @param description 当前最新版本描述。
+     * @param voteCount 当前累计获得的有效投票数。
+     * @param timestamp 内容首次创建时间。
+     * @param rewardAccrued 是否至少发生过一次奖励记账。
+     * @param deleted 当前内容是否处于删除状态。
+     * @param latestVersion 当前最新版本号。
+     * @param lastUpdatedAt 最近一次更新的时间戳。
      */
     struct Content {
-        /// @notice 内容唯一编号，自增生成。
         uint256 id;
-        /// @notice 内容作者地址。
         address author;
-
-        /// @notice 当前最新版本对应的 IPFS 哈希或内容标识。
         string ipfsHash;
-        /// @notice 当前最新版本标题。
         string title;
-        /// @notice 当前最新版本描述。
         string description;
-
-        /// @notice 当前内容累计获得的投票数量。
         uint256 voteCount;
-        /// @notice 内容首次创建时间戳。
         uint256 timestamp;
-
-        /// @notice 该内容是否已经触发过奖励记账。
         bool rewardAccrued;
-        /// @notice 该内容当前是否处于删除状态。
         bool deleted;
-        /// @notice 当前最新版本号。
         uint256 latestVersion;
-        /// @notice 最近一次更新的时间戳。
         uint256 lastUpdatedAt;
     }
 
     /**
-     * @notice 内容的历史版本记录。
-     * @dev 每次 register 或 update 时都会写入一个版本快照。
+     * @notice 内容历史版本快照。
+     * @param ipfsHash 该版本对应的链下内容哈希。
+     * @param title 该版本标题。
+     * @param description 该版本描述。
+     * @param timestamp 该版本写入时间。
      */
     struct ContentVersion {
-        /// @notice 该版本对应的 IPFS 哈希或内容标识。
         string ipfsHash;
-        /// @notice 该版本标题。
         string title;
-        /// @notice 该版本描述。
         string description;
-        /// @notice 该版本写入的时间戳。
         uint256 timestamp;
     }
 
@@ -105,39 +100,39 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     mapping(uint256 => Content) public contents;
     /// @notice 内容编号到版本总数的映射。
     mapping(uint256 => uint256) public contentVersionCount;
-    /// @dev 内容编号 => 版本号 => 版本详情，仅通过读取函数对外暴露。
+    /// @dev 内容编号 => 版本号 => 版本详情。
     mapping(uint256 => mapping(uint256 => ContentVersion)) private contentVersions;
 
-    /// @notice 记录某个地址是否已经对某条内容投过票，防止重复投票。
+    /// @notice 记录某地址是否已对某条内容投过票，防止重复投票。
     mapping(address => mapping(uint256 => bool)) public hasVoted;
-    /// @notice 已经完成奖励记账的累计票数，用于支持增量奖励结算。
+    /// @notice 已完成奖励记账时对应的累计票数，用于增量奖励结算。
     mapping(uint256 => uint256) public rewardSettledVotes;
-    /// @notice 内容累计已经发生过多少次奖励记账。
+    /// @notice 内容累计发生过多少次奖励记账。
     mapping(uint256 => uint256) public rewardAccrualCount;
 
-    /// @notice 内容满足奖励条件所需的最少票数。
+    /// @notice 触发奖励所需的最少票数。
     uint256 public minVotesToReward;
-    /// @notice 每张有效票可为作者累计的奖励金额。
+    /// @notice 每张有效票对应的奖励金额。
     uint256 public rewardPerVote;
-    /// @notice 用户参与投票所需的最少投票权或质押权重。
+    /// @notice 参与内容投票所需的最小投票权。
     uint256 public minStakeToVote;
-    /// @notice 当票数达到该阈值后，作者将不能再编辑内容。
+    /// @notice 达到该票数后内容不再允许作者编辑。
     uint256 public editLockVotes;
-    /// @notice 是否允许作者在已有投票后删除内容。
+    /// @notice 是否允许在已有投票后删除内容。
     bool public allowDeleteAfterVote;
     /// @notice 单条内容允许保留的最大版本数。
     uint256 public maxVersionsPerContent;
 
     /// @notice 投票权合约地址，用于校验投票门槛。
     IVotesLike public votesContract;
-    /// @notice 奖励金库合约地址，用于发起奖励记账。
+    /// @notice 奖励金库地址，用于执行奖励记账。
     ITreasuryNative public treasury;
 
-    /// @notice `minVotesToReward` 的安全上限，避免治理误配过大参数。
+    /// @notice `minVotesToReward` 的安全上限。
     uint256 public constant MAX_MIN_VOTES_TO_REWARD = 10000;
-    /// @notice `rewardPerVote` 的安全上限，单位为原生币。
+    /// @notice `rewardPerVote` 的安全上限。
     uint256 public constant MAX_REWARD_PER_VOTE = 1 ether;
-    /// @notice `maxVersionsPerContent` 的安全上限，避免单条内容存储无限膨胀。
+    /// @notice `maxVersionsPerContent` 的安全上限。
     uint256 public constant MAX_MAX_VERSIONS_PER_CONTENT = 100;
 
     /**
@@ -166,7 +161,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     /**
      * @notice 内容更新成功时触发。
      * @param id 被更新的内容编号。
-     * @param author 进行更新的作者地址。
+     * @param author 执行更新的作者地址。
      * @param ipfsHash 更新后的内容哈希。
      * @param title 更新后的标题。
      * @param description 更新后的描述。
@@ -198,7 +193,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     /**
      * @notice 内容被删除时触发。
      * @param id 被删除的内容编号。
-     * @param operator 触发删除的人，可能是作者也可能是 owner。
+     * @param operator 执行删除的人。
      * @param author 内容作者地址。
      */
     event ContentDeleted(
@@ -210,7 +205,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     /**
      * @notice 内容被恢复时触发。
      * @param id 被恢复的内容编号。
-     * @param operator 执行恢复操作的人。
+     * @param operator 执行恢复的人。
      * @param author 内容作者地址。
      */
     event ContentRestored(
@@ -221,20 +216,20 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
     /**
      * @notice 奖励规则更新时触发。
-     * @param minVotesToReward 新的最少奖励票数门槛。
-     * @param rewardPerVote 新的每票奖励金额。
+     * @param minVotesToReward 新的最少获奖票数门槛。
+     * @param rewardPerVote 新的单票奖励金额。
      */
     event RewardRulesUpdated(uint256 minVotesToReward, uint256 rewardPerVote);
 
     /**
-     * @notice 反女巫参数更新时触发。
+     * @notice 反女巫配置更新时触发。
      * @param votesContract 新的投票权合约地址。
-     * @param minStakeToVote 新的最少投票权门槛。
+     * @param minStakeToVote 新的最小投票权门槛。
      */
     event AntiSybilUpdated(address votesContract, uint256 minStakeToVote);
 
     /**
-     * @notice 奖励金库地址更新时触发。
+     * @notice Treasury 地址更新时触发。
      * @param treasury 新的 Treasury 合约地址。
      */
     event TreasuryUpdated(address treasury);
@@ -255,17 +250,19 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
      * @notice 向 Treasury 发起奖励记账请求时触发。
      * @param contentId 触发奖励的内容编号。
      * @param author 奖励接收的作者地址。
-     * @param amount 本次累计的奖励金额。
+     * @param amount 本次记账金额。
+     * @param voteCountAtAccrual 本次记账发生时内容的累计总票数。
      */
     event RewardAccrueRequested(
         uint256 indexed contentId,
         address indexed author,
-        uint256 amount
+        uint256 amount,
+        uint256 voteCountAtAccrual
     );
 
     /**
-     * @notice 部署合约并初始化默认治理参数。
-     * @dev 默认值适合测试和初期运行，后续可由 owner 或治理调整。
+     * @notice 部署合约并设置默认治理参数。
+     * @dev 这些默认值适合本地测试与初始运行，后续可由 owner 或治理修改。
      */
     constructor() {
         minVotesToReward = 1;
@@ -285,7 +282,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
     /**
      * @notice 设置奖励金库合约地址。
-     * @dev 只有 owner 可以更新，地址不能为零地址。
+     * @dev 仅 owner 可调用，且地址不能为零地址。
      * @param _treasury 新的 Treasury 合约地址。
      */
     function setTreasury(address _treasury) external onlyOwner {
@@ -297,16 +294,15 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice 设置反女巫检查所依赖的投票权合约和最低投票门槛。
-     * @dev 用户调用 `vote` 时，需要在 `votesContract` 中拥有至少 `minStakeToVote` 的票权。
+     * @notice 设置反女巫检查依赖的投票权合约和最小投票门槛。
+     * @dev 用户调用 `vote` 时，需要在 `votesContract` 中拥有至少 `minStakeToVote` 的投票权。
      * @param _votesContract 投票权合约地址。
-     * @param _minStakeToVote 最低投票权门槛。
+     * @param _minStakeToVote 最小投票权门槛。
      */
     function setAntiSybil(
         address _votesContract,
         uint256 _minStakeToVote
     ) external onlyOwner {
-
         require(_votesContract != address(0), "votes=0");
 
         votesContract = IVotesLike(_votesContract);
@@ -322,22 +318,20 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
      * @notice 设置内容奖励规则。
      * @dev 该规则决定一条内容达到多少票后可记账奖励，以及每票奖励金额。
      * @param _minVotesToReward 触发奖励所需的最少票数。
-     * @param _rewardPerVote 每张票对应的奖励金额。
+     * @param _rewardPerVote 单票奖励金额。
      */
     function setRewardRules(
         uint256 _minVotesToReward,
         uint256 _rewardPerVote
     ) external onlyOwner {
-
         require(
             _minVotesToReward > 0 &&
-            _minVotesToReward <= MAX_MIN_VOTES_TO_REWARD,
+                _minVotesToReward <= MAX_MIN_VOTES_TO_REWARD,
             "bad minVotes"
         );
 
         require(
-            _rewardPerVote > 0 &&
-            _rewardPerVote <= MAX_REWARD_PER_VOTE,
+            _rewardPerVote > 0 && _rewardPerVote <= MAX_REWARD_PER_VOTE,
             "bad reward"
         );
 
@@ -349,10 +343,10 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
     /**
      * @notice 设置内容编辑与删除策略。
-     * @dev 可配置编辑锁定阈值、是否允许投票后删除，以及版本数量上限。
-     * @param _editLockVotes 达到该票数后内容不再允许作者编辑。
-     * @param _allowDeleteAfterVote 是否允许内容在被投票后仍可由作者删除。
-     * @param _maxVersionsPerContent 单条内容允许保存的最大版本数。
+     * @dev 可配置编辑锁定票数、投票后是否允许删除，以及版本数量上限。
+     * @param _editLockVotes 达到该票数后内容不再允许编辑。
+     * @param _allowDeleteAfterVote 是否允许投票后删除。
+     * @param _maxVersionsPerContent 单条内容允许保留的最大版本数。
      */
     function setContentPolicy(
         uint256 _editLockVotes,
@@ -362,7 +356,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         require(_editLockVotes > 0, "bad edit lock");
         require(
             _maxVersionsPerContent > 0 &&
-            _maxVersionsPerContent <= MAX_MAX_VERSIONS_PER_CONTENT,
+                _maxVersionsPerContent <= MAX_MAX_VERSIONS_PER_CONTENT,
             "bad max versions"
         );
 
@@ -378,15 +372,15 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice 暂停内容登记、编辑、投票和奖励记账等核心流程。
-     * @dev 仅 owner 可调用，通常用于紧急事件处置。
+     * @notice 暂停登记、编辑、投票和奖励记账等核心流程。
+     * @dev 仅 owner 可调用，通常用于紧急处置。
      */
     function pause() external onlyOwner {
         _pause();
     }
 
     /**
-     * @notice 解除暂停，恢复合约正常使用。
+     * @notice 解除暂停并恢复合约使用。
      * @dev 仅 owner 可调用。
      */
     function unpause() external onlyOwner {
@@ -395,10 +389,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
     /**
      * @notice 登记一条新的内容记录。
-     * @dev
-     * 1. 必须提供非空的 IPFS 哈希和标题。
-     * 2. 会创建内容主记录。
-     * 3. 会同步写入第一个版本快照。
+     * @dev 会同步创建第一个版本快照。
      * @param _ipfsHash 内容正文或元数据对应的链下哈希。
      * @param _title 内容标题。
      * @param _description 内容描述或摘要。
@@ -408,26 +399,19 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         string memory _title,
         string memory _description
     ) external whenNotPaused {
-
         require(bytes(_ipfsHash).length > 0, "CID empty");
         require(bytes(_title).length > 0, "title empty");
 
         contentCount++;
 
         contents[contentCount] = Content({
-
             id: contentCount,
-
             author: msg.sender,
-
             ipfsHash: _ipfsHash,
             title: _title,
             description: _description,
-
             voteCount: 0,
-
             timestamp: block.timestamp,
-
             rewardAccrued: false,
             deleted: false,
             latestVersion: 1,
@@ -460,9 +444,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
     /**
      * @notice 更新已有内容并生成一个新的历史版本。
-     * @dev
-     * 仅作者本人可更新，且内容不能被删除、不能已奖励、不能达到编辑锁定票数。
-     * 同时版本总数不能超过 `maxVersionsPerContent`。
+     * @dev 仅作者本人可更新，且内容不能被删除、不能已发生奖励、不能达到编辑锁定阈值。
      * @param contentId 要更新的内容编号。
      * @param _ipfsHash 新版本内容哈希。
      * @param _title 新版本标题。
@@ -474,7 +456,6 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         string memory _title,
         string memory _description
     ) external whenNotPaused {
-
         require(contentId > 0 && contentId <= contentCount, "bad id");
         require(bytes(_ipfsHash).length > 0, "CID empty");
         require(bytes(_title).length > 0, "title empty");
@@ -523,15 +504,11 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice 将一条内容标记为已删除。
-     * @dev
-     * 1. 作者本人可删除自己的内容，但需要满足删除策略约束。
-     * 2. owner 可以出于治理或风控目的强制删除内容。
-     * 3. 删除仅改变状态标记，不清除历史记录。
+     * @notice 删除一条内容。
+     * @dev 作者或 owner 可以删除；作者删除时还需满足策略限制。
      * @param contentId 要删除的内容编号。
      */
     function deleteContent(uint256 contentId) external whenNotPaused {
-
         require(contentId > 0 && contentId <= contentCount, "bad id");
 
         Content storage c = contents[contentId];
@@ -544,10 +521,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         require(isAuthor || isOwnerCaller, "not authorized");
 
         if (isAuthor) {
-            require(
-                allowDeleteAfterVote || c.voteCount == 0,
-                "delete locked"
-            );
+            require(allowDeleteAfterVote || c.voteCount == 0, "delete locked");
             require(!c.rewardAccrued, "reward already accrued");
         }
 
@@ -558,11 +532,10 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
     /**
      * @notice 恢复一条已删除的内容。
-     * @dev 作者本人或 owner 均可恢复，恢复后内容重新可见。
+     * @dev 作者或 owner 可以恢复已删除内容。
      * @param contentId 要恢复的内容编号。
      */
     function restoreContent(uint256 contentId) external whenNotPaused {
-
         require(contentId > 0 && contentId <= contentCount, "bad id");
 
         Content storage c = contents[contentId];
@@ -580,13 +553,13 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice 读取指定内容的某个历史版本。
+     * @notice 读取指定内容的历史版本。
      * @param contentId 内容编号。
-     * @param version 要读取的版本号。
-     * @return ipfsHash 该版本对应的 IPFS 哈希。
+     * @param version 版本号。
+     * @return ipfsHash 该版本的内容哈希。
      * @return title 该版本标题。
      * @return description 该版本描述。
-     * @return timestamp 该版本写入时间戳。
+     * @return timestamp 该版本写入时间。
      */
     function getContentVersion(
         uint256 contentId,
@@ -612,20 +585,14 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice 对指定内容投票。
-     * @dev
-     * 每个地址对同一条内容只能投一次票。
-     * 调用者必须在 `votesContract` 中拥有不少于 `minStakeToVote` 的投票权。
+     * @notice 为指定内容投票。
+     * @dev 同一地址对同一内容只能投一次，且需要满足最小投票权门槛。
      * @param contentId 要投票的内容编号。
      */
     function vote(uint256 contentId) external whenNotPaused {
-
         require(contentId > 0 && contentId <= contentCount, "bad id");
-
         require(!contents[contentId].deleted, "content deleted");
-
         require(!hasVoted[msg.sender][contentId], "Already voted");
-
         require(address(votesContract) != address(0), "votes not set");
 
         uint256 power = votesContract.getVotes(msg.sender);
@@ -633,7 +600,6 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         require(power >= minStakeToVote, "stake too low");
 
         hasVoted[msg.sender][contentId] = true;
-
         contents[contentId].voteCount++;
 
         emit Voted(contentId, msg.sender);
@@ -641,18 +607,14 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
     /**
      * @notice 为满足条件的内容作者向 Treasury 发起奖励记账。
-     * @dev
-     * 奖励金额 = `voteCount * rewardPerVote`。
-     * 该函数只负责记账，不在本合约内直接向作者转账。
-     * 为避免重复奖励，一条内容只能成功记账一次。
-     * @param contentId 要发起奖励记账的内容编号。
+     * @dev 仅允许作者本人触发，并按新增票数进行增量结算。
+     * @param contentId 要记账奖励的内容编号。
      */
     function distributeReward(uint256 contentId)
         external
         whenNotPaused
         nonReentrant
     {
-
         require(address(treasury) != address(0), "treasury not set");
 
         Content storage c = contents[contentId];
@@ -660,7 +622,6 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         require(contentId > 0 && contentId <= contentCount, "bad id");
         require(!c.deleted, "content deleted");
         require(c.author == msg.sender, "not author");
-
         require(c.voteCount >= minVotesToReward, "not enough votes");
 
         uint256 settledVotes = rewardSettledVotes[contentId];
@@ -675,8 +636,6 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
         treasury.accrueReward(c.author, amount);
 
-        emit RewardAccrueRequested(contentId, c.author, amount);
+        emit RewardAccrueRequested(contentId, c.author, amount, c.voteCount);
     }
 }
-
-

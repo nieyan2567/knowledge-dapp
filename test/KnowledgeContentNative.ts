@@ -1,4 +1,4 @@
-﻿import { expect } from "chai";
+import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
   KnowledgeContent,
@@ -657,7 +657,9 @@ describe("KnowledgeContent (Treasury Native + Metadata)", function () {
       await content.connect(voter).vote(1);
     }
 
-    await content.connect(author).distributeReward(1);
+    await expect(content.connect(author).distributeReward(1))
+      .to.emit(content, "RewardAccrueRequested")
+      .withArgs(1, author.address, 5n * 10n ** 15n, 5n);
 
     expect(await content.rewardSettledVotes(1)).to.equal(5n);
     expect(await treasury.pendingRewards(author.address)).to.equal(5n * 10n ** 15n);
@@ -674,7 +676,9 @@ describe("KnowledgeContent (Treasury Native + Metadata)", function () {
       await content.connect(voter).vote(1);
     }
 
-    await content.connect(author).distributeReward(1);
+    await expect(content.connect(author).distributeReward(1))
+      .to.emit(content, "RewardAccrueRequested")
+      .withArgs(1, author.address, 3n * 10n ** 15n, 8n);
 
     expect(await content.rewardSettledVotes(1)).to.equal(8n);
     expect(await treasury.pendingRewards(author.address)).to.equal(8n * 10n ** 15n);
@@ -736,5 +740,7 @@ describe("KnowledgeContent (Treasury Native + Metadata)", function () {
     );
   });
 });
+
+
 
 
