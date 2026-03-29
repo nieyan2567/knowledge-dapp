@@ -68,6 +68,14 @@ contract NativeVotes is IVotes, Ownable, EIP712, ReentrancyGuard {
     event Activated(address indexed user, uint256 amount);
 
     /**
+     * @notice 用户撤回待激活质押时触发。
+     * @param user 撤回待激活质押的用户地址。
+     * @param amount 本次撤回的金额。
+     * @param remainingPendingStake 撤回后剩余的待激活质押金额。
+     */
+    event PendingStakeCanceled(address indexed user, uint256 amount, uint256 remainingPendingStake);
+
+    /**
      * @notice 用户发起退出申请时触发。
      * @param user 发起退出的用户地址。
      * @param amount 本次申请退出的金额。
@@ -189,6 +197,31 @@ contract NativeVotes is IVotes, Ownable, EIP712, ReentrancyGuard {
      * @notice 发起退出申请，立即扣减投票权，但资金需等待冷却期后才能提取。
      * @dev
      * 这样可以降低“先投票后立刻撤资”的治理攻击风险。
+     * @param amount 本次申请退出的金额。
+     */
+    /**
+     * @notice 撤回尚未激活的质押，立即退款且不经过冷却期。
+     * @param amount 本次撤回的待激活质押金额。
+     */
+    function cancelPendingStake(uint256 amount) external nonReentrant {
+        require(amount > 0, "amount=0");
+        require(pendingStake[msg.sender] >= amount, "insufficient pending");
+
+        pendingStake[msg.sender] -= amount;
+
+        if (pendingStake[msg.sender] == 0) {
+            activateAfterBlock[msg.sender] = 0;
+        }
+
+        (bool ok, ) = payable(msg.sender).call{value: amount}("");
+        require(ok, "transfer failed");
+
+        emit PendingStakeCanceled(msg.sender, amount, pendingStake[msg.sender]);
+    }
+
+    /**
+     * @notice 用户发起退出申请时会立刻减少投票权，但资金仍需等待冷却期后才能提取。
+     * @dev 这样可以降低“先投票后立刻撤资”的治理攻击风险。
      * @param amount 本次申请退出的金额。
      */
     function requestWithdraw(uint256 amount) external nonReentrant {

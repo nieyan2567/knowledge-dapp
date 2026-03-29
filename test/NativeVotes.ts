@@ -65,6 +65,39 @@ describe("NativeVotes", function () {
     expect(await nativeVotes.getVotes(user.address)).to.equal(ethers.parseEther("5"));
   });
 
+  it("Should allow canceling pending stake immediately without cooldown", async function () {
+    const [user] = await ethers.getSigners();
+
+    const factory = (await ethers.getContractFactory("NativeVotes")) as unknown as NativeVotes__factory;
+    const nativeVotes: NativeVotes = await factory.deploy(3600, 10);
+    await nativeVotes.waitForDeployment();
+
+    await (await nativeVotes.connect(user).deposit({ value: ethers.parseEther("5") })).wait();
+
+    await expect(nativeVotes.connect(user).cancelPendingStake(ethers.parseEther("2")))
+      .to.emit(nativeVotes, "PendingStakeCanceled")
+      .withArgs(user.address, ethers.parseEther("2"), ethers.parseEther("3"));
+
+    expect(await nativeVotes.pendingStake(user.address)).to.equal(ethers.parseEther("3"));
+    expect(await nativeVotes.getVotes(user.address)).to.equal(0n);
+  });
+
+  it("Should reset activateAfterBlock after canceling all pending stake", async function () {
+    const [user] = await ethers.getSigners();
+
+    const factory = (await ethers.getContractFactory("NativeVotes")) as unknown as NativeVotes__factory;
+    const nativeVotes: NativeVotes = await factory.deploy(3600, 10);
+    await nativeVotes.waitForDeployment();
+
+    await (await nativeVotes.connect(user).deposit({ value: ethers.parseEther("1") })).wait();
+    expect(await nativeVotes.activateAfterBlock(user.address)).to.be.gt(0n);
+
+    await (await nativeVotes.connect(user).cancelPendingStake(ethers.parseEther("1"))).wait();
+
+    expect(await nativeVotes.pendingStake(user.address)).to.equal(0n);
+    expect(await nativeVotes.activateAfterBlock(user.address)).to.equal(0n);
+  });
+
   it("Should reduce votes immediately on requestWithdraw, then withdraw after cooldown", async function () {
     const [user] = await ethers.getSigners();
 
@@ -119,6 +152,19 @@ describe("NativeVotes", function () {
 
     // 没有存款直接请求取款
     await expect(nv.connect(user).requestWithdraw(ethers.parseEther("1"))).to.be.reverted;
+  });
+
+  it("Should revert when canceling more than pending stake", async function () {
+    const [user] = await ethers.getSigners();
+    const factory = (await ethers.getContractFactory("NativeVotes")) as unknown as NativeVotes__factory;
+    const nv = await factory.deploy(1, 1);
+    await nv.waitForDeployment();
+
+    await (await nv.connect(user).deposit({ value: ethers.parseEther("1") })).wait();
+
+    await expect(nv.connect(user).cancelPendingStake(ethers.parseEther("2"))).to.be.revertedWith(
+      "insufficient pending"
+    );
   });
 
   it("Should revert when withdrawing more than pending", async function () {
