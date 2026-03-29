@@ -1,4 +1,4 @@
-import { expect } from "chai";
+﻿import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
   KnowledgeContent,
@@ -502,6 +502,8 @@ describe("KnowledgeContent (Treasury Native + Metadata)", function () {
 
     await (await content.connect(author).distributeReward(1)).wait();
 
+    expect(await content.rewardAccrualCount(1)).to.equal(1n);
+
     const pending = await treasury.pendingRewards(author.address);
     expect(pending).to.be.gt(0n);
 
@@ -734,4 +736,5 @@ describe("KnowledgeContent (Treasury Native + Metadata)", function () {
     );
   });
 });
+
 

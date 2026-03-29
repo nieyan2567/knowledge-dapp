@@ -112,6 +112,8 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     mapping(address => mapping(uint256 => bool)) public hasVoted;
     /// @notice 已经完成奖励记账的累计票数，用于支持增量奖励结算。
     mapping(uint256 => uint256) public rewardSettledVotes;
+    /// @notice 内容累计已经发生过多少次奖励记账。
+    mapping(uint256 => uint256) public rewardAccrualCount;
 
     /// @notice 内容满足奖励条件所需的最少票数。
     uint256 public minVotesToReward;
@@ -668,6 +670,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         uint256 amount = newVotes * rewardPerVote;
 
         rewardSettledVotes[contentId] = c.voteCount;
+        rewardAccrualCount[contentId] += 1;
         c.rewardAccrued = true;
 
         treasury.accrueReward(c.author, amount);
@@ -675,4 +678,5 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         emit RewardAccrueRequested(contentId, c.author, amount);
     }
 }
+
 
