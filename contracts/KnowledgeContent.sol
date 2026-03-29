@@ -110,6 +110,8 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
     /// @notice 记录某个地址是否已经对某条内容投过票，防止重复投票。
     mapping(address => mapping(uint256 => bool)) public hasVoted;
+    /// @notice 已经完成奖励记账的累计票数，用于支持增量奖励结算。
+    mapping(uint256 => uint256) public rewardSettledVotes;
 
     /// @notice 内容满足奖励条件所需的最少票数。
     uint256 public minVotesToReward;
@@ -655,13 +657,17 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
         require(contentId > 0 && contentId <= contentCount, "bad id");
         require(!c.deleted, "content deleted");
+        require(c.author == msg.sender, "not author");
 
         require(c.voteCount >= minVotesToReward, "not enough votes");
 
-        require(!c.rewardAccrued, "already accrued");
+        uint256 settledVotes = rewardSettledVotes[contentId];
+        require(c.voteCount > settledVotes, "no new votes");
 
-        uint256 amount = c.voteCount * rewardPerVote;
+        uint256 newVotes = c.voteCount - settledVotes;
+        uint256 amount = newVotes * rewardPerVote;
 
+        rewardSettledVotes[contentId] = c.voteCount;
         c.rewardAccrued = true;
 
         treasury.accrueReward(c.author, amount);
@@ -669,3 +675,4 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         emit RewardAccrueRequested(contentId, c.author, amount);
     }
 }
+

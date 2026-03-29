@@ -500,7 +500,7 @@ describe("KnowledgeContent (Treasury Native + Metadata)", function () {
       await (await content.connect(voter).vote(1)).wait();
     }
 
-    await (await content.distributeReward(1)).wait();
+    await (await content.connect(author).distributeReward(1)).wait();
 
     const pending = await treasury.pendingRewards(author.address);
     expect(pending).to.be.gt(0n);
@@ -603,6 +603,135 @@ describe("KnowledgeContent (Treasury Native + Metadata)", function () {
       await content.connect(voter).vote(1);
     }
 
-    await expect(content.distributeReward(1)).to.be.reverted;
+    await expect(content.connect(author).distributeReward(1)).to.be.reverted;
+  });
+  it("Should accrue reward incrementally when new votes arrive", async function () {
+    const [deployer, author] = await ethers.getSigners();
+
+    const nativeVotesFactory = (await ethers.getContractFactory(
+      "NativeVotes"
+    )) as unknown as NativeVotes__factory;
+    const nativeVotes: NativeVotes = await nativeVotesFactory.deploy(1, 1);
+    await nativeVotes.waitForDeployment();
+
+    const treasuryFactory = (await ethers.getContractFactory(
+      "TreasuryNative"
+    )) as unknown as TreasuryNative__factory;
+    const treasury: TreasuryNative = await treasuryFactory.deploy(
+      3600,
+      ethers.parseEther("100")
+    );
+    await treasury.waitForDeployment();
+
+    await deployer.sendTransaction({
+      to: await treasury.getAddress(),
+      value: ethers.parseEther("5"),
+    });
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await content.setAntiSybil(
+      await nativeVotes.getAddress(),
+      ethers.parseEther("1")
+    );
+    await content.setTreasury(await treasury.getAddress());
+    await treasury.setSpender(await content.getAddress(), true);
+
+    await content.connect(author).registerContent("QmHash", "Title", "Desc");
+
+    for (let i = 0; i < 5; i++) {
+      const voter = ethers.Wallet.createRandom().connect(ethers.provider);
+      await deployer.sendTransaction({
+        to: voter.address,
+        value: ethers.parseEther("2"),
+      });
+      await nativeVotes.connect(voter).deposit({ value: ethers.parseEther("1") });
+      await mineBlocks(1);
+      await nativeVotes.connect(voter).activate();
+      await content.connect(voter).vote(1);
+    }
+
+    await content.connect(author).distributeReward(1);
+
+    expect(await content.rewardSettledVotes(1)).to.equal(5n);
+    expect(await treasury.pendingRewards(author.address)).to.equal(5n * 10n ** 15n);
+
+    for (let i = 0; i < 3; i++) {
+      const voter = ethers.Wallet.createRandom().connect(ethers.provider);
+      await deployer.sendTransaction({
+        to: voter.address,
+        value: ethers.parseEther("2"),
+      });
+      await nativeVotes.connect(voter).deposit({ value: ethers.parseEther("1") });
+      await mineBlocks(1);
+      await nativeVotes.connect(voter).activate();
+      await content.connect(voter).vote(1);
+    }
+
+    await content.connect(author).distributeReward(1);
+
+    expect(await content.rewardSettledVotes(1)).to.equal(8n);
+    expect(await treasury.pendingRewards(author.address)).to.equal(8n * 10n ** 15n);
+
+    await expect(content.connect(author).distributeReward(1)).to.be.revertedWith(
+      "no new votes"
+    );
+  });
+  it("Should only allow the author to distribute reward", async function () {
+    const [deployer, author] = await ethers.getSigners();
+
+    const nativeVotesFactory = (await ethers.getContractFactory(
+      "NativeVotes"
+    )) as unknown as NativeVotes__factory;
+    const nativeVotes: NativeVotes = await nativeVotesFactory.deploy(1, 1);
+    await nativeVotes.waitForDeployment();
+
+    const treasuryFactory = (await ethers.getContractFactory(
+      "TreasuryNative"
+    )) as unknown as TreasuryNative__factory;
+    const treasury: TreasuryNative = await treasuryFactory.deploy(
+      3600,
+      ethers.parseEther("100")
+    );
+    await treasury.waitForDeployment();
+
+    await deployer.sendTransaction({
+      to: await treasury.getAddress(),
+      value: ethers.parseEther("5"),
+    });
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    await content.setAntiSybil(
+      await nativeVotes.getAddress(),
+      ethers.parseEther("1")
+    );
+    await content.setTreasury(await treasury.getAddress());
+    await treasury.setSpender(await content.getAddress(), true);
+
+    await content.connect(author).registerContent("QmHash", "Title", "Desc");
+
+    const voter = ethers.Wallet.createRandom().connect(ethers.provider);
+    await deployer.sendTransaction({
+      to: voter.address,
+      value: ethers.parseEther("2"),
+    });
+    await nativeVotes.connect(voter).deposit({ value: ethers.parseEther("1") });
+    await mineBlocks(1);
+    await nativeVotes.connect(voter).activate();
+    await content.connect(voter).vote(1);
+
+    await expect(content.connect(deployer).distributeReward(1)).to.be.revertedWith(
+      "not author"
+    );
   });
 });
+
