@@ -3,11 +3,13 @@ import { ethers } from "hardhat";
 import {
   KnowledgeContent,
   NativeVotes,
+  RevenueVault,
   TreasuryNative,
 } from "../typechain-types";
 import {
   KnowledgeContent__factory,
   NativeVotes__factory,
+  RevenueVault__factory,
   TreasuryNative__factory,
 } from "../typechain-types";
 
@@ -738,6 +740,68 @@ describe("KnowledgeContent (Treasury Native + Metadata)", function () {
     await expect(content.connect(deployer).distributeReward(1)).to.be.revertedWith(
       "not author"
     );
+  });
+
+  it("Should collect register and update fees into RevenueVault", async function () {
+    const [deployer, author] = await ethers.getSigners();
+
+    const treasuryFactory = (await ethers.getContractFactory(
+      "TreasuryNative"
+    )) as unknown as TreasuryNative__factory;
+    const treasury: TreasuryNative = await treasuryFactory.deploy(
+      3600,
+      ethers.parseEther("100")
+    );
+    await treasury.waitForDeployment();
+
+    const revenueVaultFactory = (await ethers.getContractFactory(
+      "RevenueVault"
+    )) as unknown as RevenueVault__factory;
+    const revenueVault: RevenueVault = await revenueVaultFactory.deploy(
+      await treasury.getAddress(),
+      deployer.address,
+      3000,
+      ethers.parseEther("0.5"),
+      ethers.parseEther("2"),
+      ethers.parseEther("5"),
+      ethers.parseEther("1"),
+      3600
+    );
+    await revenueVault.waitForDeployment();
+
+    const contentFactory = (await ethers.getContractFactory(
+      "KnowledgeContent"
+    )) as unknown as KnowledgeContent__factory;
+    const content: KnowledgeContent = await contentFactory.deploy();
+    await content.waitForDeployment();
+
+    const registerFee = ethers.parseEther("0.01");
+    const updateFee = ethers.parseEther("0.005");
+
+    await content.setRevenueVault(await revenueVault.getAddress());
+    await content.setContentFees(registerFee, updateFee);
+
+    await expect(
+      content
+        .connect(author)
+        .registerContent("QmPaidHash", "Paid Title", "Paid Description", {
+          value: registerFee,
+        })
+    ).to.changeEtherBalance(revenueVault, registerFee);
+
+    await expect(
+      content
+        .connect(author)
+        .updateContent(1, "QmPaidHashV2", "Paid Title V2", "Paid Description V2", {
+          value: updateFee,
+        })
+    ).to.changeEtherBalance(revenueVault, updateFee);
+
+    await expect(
+      content.connect(author).registerContent("QmBadFee", "Bad Fee", "Bad", {
+        value: 0,
+      })
+    ).to.be.revertedWith("bad fee");
   });
 });
 

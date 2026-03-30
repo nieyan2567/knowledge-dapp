@@ -10,6 +10,7 @@ pragma solidity ^0.8.20;
  * 2. 允许满足门槛的地址对内容投票，并记录是否重复投票。
  * 3. 支持作者在内容未进入锁定状态前更新内容，并保留历史版本。
  * 4. 当内容满足奖励条件时，由作者触发向 Treasury 进行奖励记账。
+ * 5. 通过可治理的发布费与更新费，为协议提供可持续的费用消耗口。
  */
 
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -127,6 +128,12 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     IVotesLike public votesContract;
     /// @notice 奖励金库地址，用于执行奖励记账。
     ITreasuryNative public treasury;
+    /// @notice 协议费用接收地址，通常为 Revenue Vault。
+    address payable public revenueVault;
+    /// @notice 注册新内容时需要支付的协议费用。
+    uint256 public registerFee;
+    /// @notice 创建新版本时需要支付的协议费用。
+    uint256 public updateFee;
 
     /// @notice `minVotesToReward` 的安全上限。
     uint256 public constant MAX_MIN_VOTES_TO_REWARD = 10000;
@@ -235,6 +242,19 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     event TreasuryUpdated(address treasury);
 
     /**
+     * @notice Revenue Vault 地址更新时触发。
+     * @param revenueVault 新的费用接收地址。
+     */
+    event RevenueVaultUpdated(address indexed revenueVault);
+
+    /**
+     * @notice 内容发布费或更新费更新时触发。
+     * @param registerFee 新的发布费用。
+     * @param updateFee 新的更新费用。
+     */
+    event ContentFeesUpdated(uint256 registerFee, uint256 updateFee);
+
+    /**
      * @notice 内容策略更新时触发。
      * @param editLockVotes 新的编辑锁定票数阈值。
      * @param allowDeleteAfterVote 是否允许投票后删除。
@@ -278,6 +298,7 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
             allowDeleteAfterVote,
             maxVersionsPerContent
         );
+        emit ContentFeesUpdated(registerFee, updateFee);
     }
 
     /**
@@ -291,6 +312,39 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         treasury = ITreasuryNative(_treasury);
 
         emit TreasuryUpdated(_treasury);
+    }
+
+    /**
+     * @notice 设置协议费用接收地址。
+     * @dev 仅 owner 或后续的治理 Timelock 可以修改。
+     * @param _revenueVault 新的 Revenue Vault 地址。
+     */
+    function setRevenueVault(address payable _revenueVault) external onlyOwner {
+        require(_revenueVault != address(0), "vault=0");
+
+        revenueVault = _revenueVault;
+
+        emit RevenueVaultUpdated(_revenueVault);
+    }
+
+    /**
+     * @notice 设置内容发布费与新版本更新费。
+     * @dev 当任一费用大于 0 时，必须先完成 Revenue Vault 配置。
+     * @param _registerFee 注册新内容时需要支付的费用。
+     * @param _updateFee 创建新版本时需要支付的费用。
+     */
+    function setContentFees(
+        uint256 _registerFee,
+        uint256 _updateFee
+    ) external onlyOwner {
+        if (_registerFee > 0 || _updateFee > 0) {
+            require(revenueVault != address(0), "vault not set");
+        }
+
+        registerFee = _registerFee;
+        updateFee = _updateFee;
+
+        emit ContentFeesUpdated(_registerFee, _updateFee);
     }
 
     /**
@@ -388,17 +442,20 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice 登记一条新的内容记录。
-     * @dev 会同步创建第一个版本快照。
-     * @param _ipfsHash 内容正文或元数据对应的链下哈希。
-     * @param _title 内容标题。
-     * @param _description 内容描述或摘要。
+     * @notice 注册一条新的内容记录并创建初始版本。
+     * @dev
+     * 调用方需要提供非空 CID 和标题；如果配置了发布费，还需要附带精确的原生币金额。
+     * 成功后会新增内容记录、写入版本 1，并触发内容注册与版本存储事件。
+     * @param _ipfsHash 新内容文件对应的 IPFS CID。
+     * @param _title 新内容标题。
+     * @param _description 新内容描述。
      */
     function registerContent(
         string memory _ipfsHash,
         string memory _title,
         string memory _description
-    ) external whenNotPaused {
+    ) external payable whenNotPaused nonReentrant {
+        _collectProtocolFee(registerFee);
         require(bytes(_ipfsHash).length > 0, "CID empty");
         require(bytes(_title).length > 0, "title empty");
 
@@ -444,7 +501,9 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
 
     /**
      * @notice 更新已有内容并生成一个新的历史版本。
-     * @dev 仅作者本人可更新，且内容不能被删除、不能已发生奖励、不能达到编辑锁定阈值。
+     * @dev
+     * 仅作者本人可更新，且内容不能被删除、不能已发生奖励、不能达到编辑锁定阈值。
+     * 如果配置了更新费，还需要附带精确的原生币金额。
      * @param contentId 要更新的内容编号。
      * @param _ipfsHash 新版本内容哈希。
      * @param _title 新版本标题。
@@ -455,7 +514,8 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
         string memory _ipfsHash,
         string memory _title,
         string memory _description
-    ) external whenNotPaused {
+    ) external payable whenNotPaused nonReentrant {
+        _collectProtocolFee(updateFee);
         require(contentId > 0 && contentId <= contentCount, "bad id");
         require(bytes(_ipfsHash).length > 0, "CID empty");
         require(bytes(_title).length > 0, "title empty");
@@ -585,6 +645,24 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     }
 
     /**
+     * @notice 校验并收取协议费用。
+     * @dev 当 amount 为 0 时直接返回；否则要求 msg.value 精确匹配，并把费用转入 Revenue Vault。
+     * @param amount 当前操作应收取的费用。
+     */
+    function _collectProtocolFee(uint256 amount) internal {
+        require(msg.value == amount, "bad fee");
+
+        if (amount == 0) {
+            return;
+        }
+
+        require(revenueVault != address(0), "vault not set");
+
+        (bool ok, ) = revenueVault.call{value: amount}("");
+        require(ok, "fee transfer failed");
+    }
+
+    /**
      * @notice 为指定内容投票。
      * @dev 同一地址对同一内容只能投一次，且需要满足最小投票权门槛。
      * @param contentId 要投票的内容编号。
@@ -606,9 +684,11 @@ contract KnowledgeContent is Ownable, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice 为满足条件的内容作者向 Treasury 发起奖励记账。
-     * @dev 仅允许作者本人触发，并按新增票数进行增量结算。
-     * @param contentId 要记账奖励的内容编号。
+     * @notice 为内容作者执行一次奖励记账。
+     * @dev
+     * 仅内容作者本人可调用。
+     * 记账采用增量结算：每次仅对上次结算后新增的票数计算奖励。
+     * @param contentId 需要执行奖励记账的内容 ID。
      */
     function distributeReward(uint256 contentId)
         external

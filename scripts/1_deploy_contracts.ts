@@ -5,7 +5,7 @@ import * as path from "path";
 import { DeploymentInfo } from "../types/deployment";
 
 async function main() {
-  console.log("🚀 开始部署合约...");
+  console.log("Starting contract deployment...");
 
   const [deployer] = await ethers.getSigners();
   const net = await ethers.provider.getNetwork();
@@ -14,43 +14,39 @@ async function main() {
   console.log("ChainId:", Number(net.chainId));
   console.log("Deployer:", deployer.address);
 
-  // --- 1) NativeVotes ---
-  const cooldownSeconds = 3600; // 1h（演示可改短）
-  const activationBlocks = 10;  // 激活延迟（演示可改短）
+  const cooldownSeconds = 3600;
+  const activationBlocks = 10;
 
-  console.log("📦 部署 NativeVotes...");
+  console.log("Deploying NativeVotes...");
   const NativeVotes = await ethers.getContractFactory("NativeVotes");
   const nativeVotes = await NativeVotes.deploy(cooldownSeconds, activationBlocks);
   await nativeVotes.waitForDeployment();
   const nativeVotesAddress = await nativeVotes.getAddress();
-  console.log("✅ NativeVotes:", nativeVotesAddress);
+  console.log("NativeVotes:", nativeVotesAddress);
 
-  // --- 2) KnowledgeContent ---
-  console.log("📦 部署 KnowledgeContent...");
+  console.log("Deploying KnowledgeContent...");
   const KnowledgeContentFactory = await ethers.getContractFactory("KnowledgeContent");
   const content = await KnowledgeContentFactory.deploy();
   await content.waitForDeployment();
   const contentAddress = await content.getAddress();
-  console.log("✅ KnowledgeContent:", contentAddress);
+  console.log("KnowledgeContent:", contentAddress);
 
-  // --- 3) 部署 TreasuryNative (金库) ---
-  console.log("📦 部署 TreasuryNative...");
-  const epochDuration = 7 * 24 * 3600; // 7 天一个 epoch
-  const epochBudget = ethers.parseEther("100"); // 每个 epoch 预算 100 KC（演示可改小）
-
+  console.log("Deploying TreasuryNative...");
+  const epochDuration = 7 * 24 * 3600;
+  const epochBudget = ethers.parseEther("100");
   const Treasury = await ethers.getContractFactory("TreasuryNative");
   const treasury = await Treasury.deploy(epochDuration, epochBudget);
   await treasury.waitForDeployment();
   const treasuryAddress = await treasury.getAddress();
-  console.log("✅ TreasuryNative 部署成功:", treasuryAddress);
+  console.log("TreasuryNative:", treasuryAddress);
 
-  // --- 4) RevenueVault ---
-  console.log("📦 部署 RevenueVault...");
+  console.log("Deploying RevenueVault...");
   const faucetWallet = process.env.FAUCET_WALLET;
   if (!faucetWallet) {
     throw new Error("FAUCET_WALLET is not set in .env");
   }
-  const faucetShareBps = 3000; // 30% to faucet, 70% reserved for treasury
+
+  const faucetShareBps = 3000;
   const minFaucetPayout = ethers.parseEther("0.5");
   const refillThreshold = ethers.parseEther("2");
   const targetTreasuryBalance = ethers.parseEther("5");
@@ -70,49 +66,39 @@ async function main() {
   );
   await revenueVault.waitForDeployment();
   const revenueVaultAddress = await revenueVault.getAddress();
-  console.log("✅ RevenueVault:", revenueVaultAddress);
+  console.log("RevenueVault:", revenueVaultAddress);
 
-  // --- 5) TimelockController ---
-  // executors = address(0) => anyone can execute
   const Timelock = await ethers.getContractFactory("TimelockController");
-  const minDelay = 60; // Besu 联盟链演示建议 60 秒
-
+  const minDelay = 60;
   const timelock = await Timelock.deploy(
     minDelay,
-    [deployer.address],   // proposers：初始化阶段先给 deployer，后面移交给 governor
-    [ethers.ZeroAddress], // executors：0地址 => anyone can execute
-    deployer.address      // admin：初始化阶段给 deployer，最终会 renounce
+    [deployer.address],
+    [ethers.ZeroAddress],
+    deployer.address
   );
-
   await timelock.waitForDeployment();
   const timelockAddress = await timelock.getAddress();
-  console.log("✅ TimelockController:", timelockAddress);
+  console.log("TimelockController:", timelockAddress);
 
-  // ⭐ 关键：部署后立刻验证 Timelock Admin 是否正确（OZ 4.9.x 用 TIMELOCK_ADMIN_ROLE）
   const TIMELOCK_ADMIN_ROLE = await timelock.TIMELOCK_ADMIN_ROLE();
   const isTimelockAdmin = await timelock.hasRole(TIMELOCK_ADMIN_ROLE, deployer.address);
-
-  console.log("Timelock TIMELOCK_ADMIN_ROLE:", TIMELOCK_ADMIN_ROLE);
-  console.log("Deployer is Timelock Admin?:", isTimelockAdmin);
-
   if (!isTimelockAdmin) {
-    throw new Error(
-      [
-        "❌ Timelock 部署后 deployer 不是 TIMELOCK_ADMIN_ROLE！",
-        "这通常意味着：TimelockController 版本/ABI 与预期不一致，或部署到的网络/地址有误。",
-        "建议：确认你使用的 @openzeppelin/contracts 版本（建议 4.9.6）并重新部署。",
-      ].join("\n")
-    );
+    throw new Error("Deployer is not the initial Timelock admin");
   }
 
-  // --- 6) KnowledgeGovernor ---
+  console.log("Deploying KnowledgeGovernor...");
+  const proposalFee = ethers.parseEther("0.05");
   const Governor = await ethers.getContractFactory("KnowledgeGovernor");
-  const governor = await Governor.deploy(nativeVotesAddress, timelockAddress);
+  const governor = await Governor.deploy(
+    nativeVotesAddress,
+    timelockAddress,
+    revenueVaultAddress,
+    proposalFee
+  );
   await governor.waitForDeployment();
   const governorAddress = await governor.getAddress();
-  console.log("✅ KnowledgeGovernor:", governorAddress);
+  console.log("KnowledgeGovernor:", governorAddress);
 
-  // --- 7) 写 deployments/<network>.json ---
   const deploymentInfo: DeploymentInfo = {
     network: hre.network.name,
     chainId: Number(net.chainId),
@@ -135,9 +121,9 @@ async function main() {
 
   const filePath = path.join(deploymentsDir, `${hre.network.name}.json`);
   fs.writeFileSync(filePath, JSON.stringify(deploymentInfo, null, 2), "utf8");
-  console.log(`📄 deployments/${hre.network.name}.json 已写入: ${filePath}`);
+  console.log(`Saved deployment to ${filePath}`);
 
-  console.log("\n🎉 第一阶段完成：所有合约已部署且 Timelock Admin 校验通过。");
+  console.log("Deployment complete.");
 }
 
 main().catch((error) => {

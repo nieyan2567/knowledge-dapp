@@ -1,18 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/**
- * @title KnowledgeGovernor
- * @notice 基于 OpenZeppelin Governor 扩展组合实现的治理合约。
- * @dev
- * 主要特性：
- * 1. 投票权来源于 `NativeVotes` 这类兼容 `IVotes` 的质押投票权合约。
- * 2. 只有达到提案门槛的地址才能发起提案，减少垃圾提案。
- * 3. 法定人数按总投票权供应量的固定比例计算。
- * 4. 提案通过后不会立即执行，而是进入 `TimelockController` 延迟执行。
- * 5. 启用延迟法定人数扩展，降低提案临近结束时的突袭投票风险。
- */
-
 import "@openzeppelin/contracts/governance/Governor.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
@@ -21,6 +9,16 @@ import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol
 import "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorPreventLateQuorum.sol";
 
+/**
+ * @title KnowledgeGovernor
+ * @notice 知识治理系统的核心 Governor 合约。
+ * @dev
+ * 基于 OpenZeppelin Governor 组合实现，负责：
+ * 1. 创建提案并进入投票流程。
+ * 2. 通过 Timelock 排队与执行治理动作。
+ * 3. 维护法定人数、投票延迟、投票周期等治理参数。
+ * 4. 为提案提交引入可治理调节的协议费用，并将费用转入 Revenue Vault。
+ */
 contract KnowledgeGovernor is
     Governor,
     GovernorSettings,
@@ -30,29 +28,125 @@ contract KnowledgeGovernor is
     GovernorTimelockControl,
     GovernorPreventLateQuorum
 {
-    /**
-     * @notice 部署治理合约并绑定投票权来源与 Timelock。
-     * @param _token 提供治理投票权快照的 `IVotes` 合约地址。
-     * @param _timelock 提案执行所依赖的 TimelockController 合约地址。
-     */
-    constructor(IVotes _token, TimelockController _timelock)
-        Governor("KnowledgeGovernor")
-        GovernorSettings(
-            5,          // 投票延迟：提案创建后需等待 5 个区块才开始投票。
-            100,        // 投票周期：每个提案开放投票 100 个区块。
-            10 ether    // 提案门槛：至少拥有 10 KC 投票权才能发起提案。
-        )
-        GovernorVotes(_token) // 使用外部 `IVotes` 合约作为投票权来源。
-        GovernorVotesQuorumFraction(4) // 法定人数为总投票权的 4%。
-        GovernorTimelockControl(_timelock)
-        GovernorPreventLateQuorum(20) // 若法定人数在最后阶段才达到，则额外延长 20 个区块。
-    {}
+    /// @notice 提案费用接收地址，通常为协议的 Revenue Vault。
+    address payable public revenueVault;
+
+    /// @notice 当前发起提案所需附带的原生币费用。
+    uint256 public proposalFee;
 
     /**
-     * @notice 返回提案创建后到投票开始前需要等待的区块数。
-     * @dev 该函数是 OZ 多继承要求的显式 override。
-     * @return 当前治理配置下的投票延迟区块数。
+     * @notice Revenue Vault 地址更新时触发。
+     * @param revenueVault 新的费用接收地址。
      */
+    event RevenueVaultUpdated(address indexed revenueVault);
+
+    /**
+     * @notice 提案费用更新时触发。
+     * @param proposalFee 新的提案费用。
+     */
+    event ProposalFeeUpdated(uint256 proposalFee);
+
+    /**
+     * @notice 部署治理合约并初始化治理参数与费用配置。
+     * @param _token 提供投票权快照的 IVotes 代币合约。
+     * @param _timelock 提案排队与执行所使用的 TimelockController。
+     * @param _revenueVault 提案费用接收地址。
+     * @param _proposalFee 初始提案费用。
+     */
+    constructor(
+        IVotes _token,
+        TimelockController _timelock,
+        address payable _revenueVault,
+        uint256 _proposalFee
+    )
+        Governor("KnowledgeGovernor")
+        GovernorSettings(5, 100, 10 ether)
+        GovernorVotes(_token)
+        GovernorVotesQuorumFraction(4)
+        GovernorTimelockControl(_timelock)
+        GovernorPreventLateQuorum(20)
+    {
+        if (_proposalFee > 0) {
+            require(_revenueVault != address(0), "vault=0");
+        }
+
+        revenueVault = _revenueVault;
+        proposalFee = _proposalFee;
+
+        emit RevenueVaultUpdated(_revenueVault);
+        emit ProposalFeeUpdated(_proposalFee);
+    }
+
+    /**
+     * @notice 更新提案费用接收地址。
+     * @dev 只能通过治理提案调用。
+     * @param _revenueVault 新的 Revenue Vault 地址。
+     */
+    function setRevenueVault(address payable _revenueVault) external onlyGovernance {
+        revenueVault = _revenueVault;
+        emit RevenueVaultUpdated(_revenueVault);
+    }
+
+    /**
+     * @notice 更新发起提案所需的协议费用。
+     * @dev 当费用大于 0 时，要求 Revenue Vault 已正确配置。
+     * @param _proposalFee 新的提案费用。
+     */
+    function setProposalFee(uint256 _proposalFee) external onlyGovernance {
+        if (_proposalFee > 0) {
+            require(revenueVault != address(0), "vault not set");
+        }
+
+        proposalFee = _proposalFee;
+        emit ProposalFeeUpdated(_proposalFee);
+    }
+
+    /**
+     * @notice 在提案费用为 0 时创建提案。
+     * @dev 保留标准 Governor.propose 入口，用于免费提案场景。
+     * @param targets 提案动作目标合约列表。
+     * @param values 每个动作附带的原生币数额。
+     * @param calldatas 每个动作的 calldata。
+     * @param description 提案描述文本。
+     * @return 提案 ID。
+     */
+    function propose(
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        string memory description
+    ) public override(Governor, IGovernor) returns (uint256) {
+        require(proposalFee == 0, "fee required");
+        return super.propose(targets, values, calldatas, description);
+    }
+
+    /**
+     * @notice 附带提案费用创建治理提案。
+     * @dev 收到的费用会立即转入 Revenue Vault，再调用底层 Governor 提案流程。
+     * @param targets 提案动作目标合约列表。
+     * @param values 每个动作附带的原生币数额。
+     * @param calldatas 每个动作的 calldata。
+     * @param description 提案描述文本。
+     * @return 提案 ID。
+     */
+    function proposeWithFee(
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        string memory description
+    ) external payable returns (uint256) {
+        require(msg.value == proposalFee, "bad fee");
+
+        if (proposalFee > 0) {
+            require(revenueVault != address(0), "vault not set");
+            (bool ok, ) = revenueVault.call{value: msg.value}("");
+            require(ok, "fee transfer failed");
+        }
+
+        return super.propose(targets, values, calldatas, description);
+    }
+
+    /// @inheritdoc GovernorSettings
     function votingDelay()
         public
         view
@@ -62,11 +156,7 @@ contract KnowledgeGovernor is
         return super.votingDelay();
     }
 
-    /**
-     * @notice 返回提案开放投票的持续区块数。
-     * @dev 该函数是 OZ 多继承要求的显式 override。
-     * @return 当前治理配置下的投票周期区块数。
-     */
+    /// @inheritdoc GovernorSettings
     function votingPeriod()
         public
         view
@@ -76,11 +166,7 @@ contract KnowledgeGovernor is
         return super.votingPeriod();
     }
 
-    /**
-     * @notice 返回发起提案所需达到的最小投票权门槛。
-     * @dev 该函数是 OZ 多继承要求的显式 override。
-     * @return 当前提案门槛。
-     */
+    /// @inheritdoc GovernorSettings
     function proposalThreshold()
         public
         view
@@ -90,11 +176,7 @@ contract KnowledgeGovernor is
         return super.proposalThreshold();
     }
 
-    /**
-     * @notice 查询某个区块对应的法定人数要求。
-     * @param blockNumber 要计算法定人数的历史区块号。
-     * @return 指定区块下提案通过所需的最少赞成/参与基准票数。
-     */
+    /// @inheritdoc GovernorVotesQuorumFraction
     function quorum(uint256 blockNumber)
         public
         view
@@ -104,11 +186,7 @@ contract KnowledgeGovernor is
         return super.quorum(blockNumber);
     }
 
-    /**
-     * @notice 查询某个提案当前所处的状态。
-     * @param proposalId 要查询的提案编号。
-     * @return ProposalState 提案当前状态，如 Pending、Active、Queued、Executed 等。
-     */
+    /// @inheritdoc GovernorTimelockControl
     function state(uint256 proposalId)
         public
         view
@@ -118,14 +196,7 @@ contract KnowledgeGovernor is
         return super.state(proposalId);
     }
 
-    /**
-     * @notice 查询某个提案的投票截止区块。
-     * @dev
-     * 当启用了 `GovernorPreventLateQuorum` 后，若法定人数在提案末期才达到，
-     * 截止区块可能会被动态延长，因此需要使用该 override 返回最终值。
-     * @param proposalId 要查询的提案编号。
-     * @return 该提案当前生效的最终截止区块。
-     */
+    /// @inheritdoc GovernorPreventLateQuorum
     function proposalDeadline(uint256 proposalId)
         public
         view
@@ -135,15 +206,7 @@ contract KnowledgeGovernor is
         return super.proposalDeadline(proposalId);
     }
 
-    /**
-     * @notice 执行已通过且已排队完成的提案。
-     * @dev 实际执行逻辑由 `GovernorTimelockControl` 接管并通过 Timelock 完成。
-     * @param proposalId 要执行的提案编号。
-     * @param targets 提案调用的目标合约地址列表。
-     * @param values 提案对每个目标发送的原生币金额列表。
-     * @param calldatas 提案对每个目标执行的 calldata 列表。
-     * @param descriptionHash 提案描述字符串的哈希值。
-     */
+    /// @inheritdoc GovernorTimelockControl
     function _execute(
         uint256 proposalId,
         address[] memory targets,
@@ -157,14 +220,7 @@ contract KnowledgeGovernor is
         super._execute(proposalId, targets, values, calldatas, descriptionHash);
     }
 
-    /**
-     * @notice 取消一个尚未执行的提案。
-     * @param targets 提案调用的目标合约地址列表。
-     * @param values 提案对每个目标发送的原生币金额列表。
-     * @param calldatas 提案对每个目标执行的 calldata 列表。
-     * @param descriptionHash 提案描述字符串的哈希值。
-     * @return 被取消的提案编号。
-     */
+    /// @inheritdoc GovernorTimelockControl
     function _cancel(
         address[] memory targets,
         uint256[] memory values,
@@ -178,11 +234,7 @@ contract KnowledgeGovernor is
         return super._cancel(targets, values, calldatas, descriptionHash);
     }
 
-    /**
-     * @notice 返回治理执行者地址。
-     * @dev 在集成 Timelock 时，执行者通常是 Timelock 合约而不是 Governor 自身。
-     * @return 当前治理执行上下文对应的执行者地址。
-     */
+    /// @inheritdoc GovernorTimelockControl
     function _executor()
         internal
         view
@@ -192,10 +244,7 @@ contract KnowledgeGovernor is
         return super._executor();
     }
 
-    /**
-     * @notice 返回延迟法定人数机制下的额外延长区块数。
-     * @return 当前配置的延长区块数。
-     */
+    /// @inheritdoc GovernorPreventLateQuorum
     function lateQuorumVoteExtension()
         public
         view
@@ -206,9 +255,9 @@ contract KnowledgeGovernor is
     }
 
     /**
-     * @notice 通过治理提案修改延迟法定人数的延长区块数。
-     * @dev 只有治理流程本身可以调用，普通 owner 或外部账户不能直接修改。
-     * @param newVoteExtension 新的延长区块数。
+     * @notice 更新迟到法定人数的额外投票延长期。
+     * @dev 只能通过治理提案调用。
+     * @param newVoteExtension 新的延长期区块数。
      */
     function setLateQuorumVoteExtension(uint64 newVoteExtension)
         public
@@ -218,15 +267,7 @@ contract KnowledgeGovernor is
         super.setLateQuorumVoteExtension(newVoteExtension);
     }
 
-    /**
-     * @notice 处理投票写入，并在需要时触发延迟法定人数机制。
-     * @param proposalId 被投票的提案编号。
-     * @param account 投票账户地址。
-     * @param support 投票选项，通常为反对/赞成/弃权。
-     * @param reason 投票理由文本。
-     * @param params 扩展投票参数。
-     * @return 该账户本次投票所消耗或计入的投票权数量。
-     */
+    /// @inheritdoc GovernorPreventLateQuorum
     function _castVote(
         uint256 proposalId,
         address account,
@@ -241,11 +282,7 @@ contract KnowledgeGovernor is
         return super._castVote(proposalId, account, support, reason, params);
     }
 
-    /**
-     * @notice 查询合约是否支持指定接口。
-     * @param interfaceId 要检测的接口标识。
-     * @return 若支持该接口则返回 true。
-     */
+    /// @inheritdoc GovernorTimelockControl
     function supportsInterface(bytes4 interfaceId)
         public
         view
