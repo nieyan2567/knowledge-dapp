@@ -165,7 +165,7 @@ async function main() {
   console.log("\nFaucetVault 状态");
   const faucetOwner = await faucetVault.owner();
   const faucetPaused = await faucetVault.paused();
-  const faucetSigner = await faucetVault.signer();
+  const faucetSigner = await faucetVault.getFunction("signer")();
   const faucetBal = await ethers.provider.getBalance(info.contracts.FaucetVault);
   const faucetClaimAmount = await faucetVault.claimAmount();
   const faucetMinAllowedBalance = await faucetVault.minAllowedBalance();
