@@ -10,6 +10,7 @@ const LOCAL_CONTRACTS = [
   "NativeVotes",
   "KnowledgeContent",
   "TreasuryNative",
+  "FaucetVault",
   "RevenueVault",
   "KnowledgeGovernor",
 ];

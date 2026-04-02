@@ -40,12 +40,32 @@ async function main() {
   const treasuryAddress = await treasury.getAddress();
   console.log("TreasuryNative:", treasuryAddress);
 
-  console.log("Deploying RevenueVault...");
-  const faucetWallet = process.env.FAUCET_WALLET;
-  if (!faucetWallet) {
-    throw new Error("FAUCET_WALLET is not set in .env");
+  console.log("Deploying FaucetVault...");
+  const faucetSigner = process.env.FAUCET_AUTH_SIGNER_ADDRESS;
+  if (!faucetSigner) {
+    throw new Error("FAUCET_AUTH_SIGNER_ADDRESS is not set in .env");
   }
 
+  const faucetClaimAmount = ethers.parseEther("2");
+  const faucetMinAllowedBalance = ethers.parseEther("1");
+  const faucetClaimCooldown = 24 * 3600;
+  const faucetEpochDuration = 24 * 3600;
+  const faucetEpochBudget = ethers.parseEther("20");
+
+  const FaucetVault = await ethers.getContractFactory("FaucetVault");
+  const faucetVault = await FaucetVault.deploy(
+    faucetSigner,
+    faucetClaimAmount,
+    faucetMinAllowedBalance,
+    faucetClaimCooldown,
+    faucetEpochDuration,
+    faucetEpochBudget
+  );
+  await faucetVault.waitForDeployment();
+  const faucetVaultAddress = await faucetVault.getAddress();
+  console.log("FaucetVault:", faucetVaultAddress);
+
+  console.log("Deploying RevenueVault...");
   const faucetShareBps = 3000;
   const minFaucetPayout = ethers.parseEther("0.5");
   const refillThreshold = ethers.parseEther("2");
@@ -56,7 +76,7 @@ async function main() {
   const RevenueVault = await ethers.getContractFactory("RevenueVault");
   const revenueVault = await RevenueVault.deploy(
     treasuryAddress,
-    faucetWallet,
+    faucetVaultAddress,
     faucetShareBps,
     minFaucetPayout,
     refillThreshold,
@@ -108,6 +128,7 @@ async function main() {
       NativeVotes: nativeVotesAddress,
       KnowledgeContent: contentAddress,
       TreasuryNative: treasuryAddress,
+      FaucetVault: faucetVaultAddress,
       RevenueVault: revenueVaultAddress,
       TimelockController: timelockAddress,
       KnowledgeGovernor: governorAddress,

@@ -3,6 +3,7 @@ import * as readline from "readline";
 
 import { loadDeployment } from "./utils/deployments";
 import {
+  FaucetVault,
   KnowledgeContent,
   NativeVotes,
   RevenueVault,
@@ -35,6 +36,7 @@ async function main() {
   const nativeVotesAddress = info.contracts.NativeVotes;
   const contentAddress = info.contracts.KnowledgeContent;
   const treasuryAddress = info.contracts.TreasuryNative;
+  const faucetVaultAddress = info.contracts.FaucetVault;
   const revenueVaultAddress = info.contracts.RevenueVault;
   const timelockAddress = info.contracts.TimelockController;
   const governorAddress = info.contracts.KnowledgeGovernor;
@@ -50,6 +52,9 @@ async function main() {
   const treasury = (await (await ethers.getContractFactory("TreasuryNative")).attach(
     treasuryAddress
   )) as TreasuryNative;
+  const faucetVault = (await (await ethers.getContractFactory("FaucetVault")).attach(
+    faucetVaultAddress
+  )) as FaucetVault;
   const revenueVault = (await (await ethers.getContractFactory("RevenueVault")).attach(
     revenueVaultAddress
   )) as RevenueVault;
@@ -60,11 +65,13 @@ async function main() {
   const nativeVotesOwner = await nativeVotes.owner();
   const contentOwner = await content.owner();
   const treasuryOwner = await treasury.owner();
+  const faucetVaultOwner = await faucetVault.owner();
   const revenueVaultOwner = await revenueVault.owner();
 
   console.log("NativeVotes 当前 owner:", nativeVotesOwner);
   console.log("KnowledgeContent 当前 owner:", contentOwner);
   console.log("TreasuryNative 当前 owner:", treasuryOwner);
+  console.log("FaucetVault 当前 owner:", faucetVaultOwner);
   console.log("RevenueVault 当前 owner:", revenueVaultOwner);
   console.log("当前部署账户:", deployer.address);
 
@@ -76,6 +83,9 @@ async function main() {
   }
   if (treasuryOwner.toLowerCase() !== deployer.address.toLowerCase()) {
     throw new Error(`移交前 TreasuryNative owner 校验失败，当前 owner: ${treasuryOwner}`);
+  }
+  if (faucetVaultOwner.toLowerCase() !== deployer.address.toLowerCase()) {
+    throw new Error(`移交前 FaucetVault owner 校验失败，当前 owner: ${faucetVaultOwner}`);
   }
   if (revenueVaultOwner.toLowerCase() !== deployer.address.toLowerCase()) {
     throw new Error(`移交前 RevenueVault owner 校验失败，当前 owner: ${revenueVaultOwner}`);
@@ -117,6 +127,10 @@ async function main() {
   await treasuryTx.wait();
   console.log("TreasuryNative 所有权已转移，交易哈希:", treasuryTx.hash);
 
+  const faucetVaultTx = await faucetVault.transferOwnership(timelockAddress);
+  await faucetVaultTx.wait();
+  console.log("FaucetVault 所有权已转移，交易哈希:", faucetVaultTx.hash);
+
   const revenueVaultTx = await revenueVault.transferOwnership(timelockAddress);
   await revenueVaultTx.wait();
   console.log("RevenueVault 所有权已转移，交易哈希:", revenueVaultTx.hash);
@@ -140,6 +154,7 @@ async function main() {
   const newNativeVotesOwner = await nativeVotes.owner();
   const newContentOwner = await content.owner();
   const newTreasuryOwner = await treasury.owner();
+  const newFaucetVaultOwner = await faucetVault.owner();
   const newRevenueVaultOwner = await revenueVault.owner();
 
   if (newNativeVotesOwner.toLowerCase() !== timelockAddress.toLowerCase()) {
@@ -150,6 +165,9 @@ async function main() {
   }
   if (newTreasuryOwner.toLowerCase() !== timelockAddress.toLowerCase()) {
     throw new Error("最终校验失败：TreasuryNative owner 未转移到 Timelock");
+  }
+  if (newFaucetVaultOwner.toLowerCase() !== timelockAddress.toLowerCase()) {
+    throw new Error("最终校验失败：FaucetVault owner 未转移到 Timelock");
   }
   if (newRevenueVaultOwner.toLowerCase() !== timelockAddress.toLowerCase()) {
     throw new Error("最终校验失败：RevenueVault owner 未转移到 Timelock");
@@ -171,7 +189,7 @@ async function main() {
 
   console.log("所有所有权与角色校验均已通过。");
   console.log(
-    "NativeVotes / KnowledgeContent / TreasuryNative / RevenueVault 已全部移交给 Timelock。"
+    "NativeVotes / KnowledgeContent / TreasuryNative / FaucetVault / RevenueVault 已全部移交给 Timelock。"
   );
 }
 

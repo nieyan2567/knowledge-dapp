@@ -1,6 +1,7 @@
 import { ethers } from "hardhat";
 import { loadDeployment } from "./utils/deployments";
 import {
+  FaucetVault,
   KnowledgeContent,
   RevenueVault,
   TreasuryNative,
@@ -14,14 +15,10 @@ async function main() {
   const nativeVotesAddress = info.contracts.NativeVotes;
   const timelockAddress = info.contracts.TimelockController;
   const treasuryAddress = info.contracts.TreasuryNative;
+  const faucetVaultAddress = info.contracts.FaucetVault;
   const revenueVaultAddress = info.contracts.RevenueVault;
-  const faucetWallet = process.env.FAUCET_WALLET;
 
   const [deployer] = await ethers.getSigners();
-
-  if (!faucetWallet) {
-    throw new Error("FAUCET_WALLET is not set in .env");
-  }
 
   const ContentFactory = await ethers.getContractFactory("KnowledgeContent");
   const content = ContentFactory.attach(contentAddress) as KnowledgeContent;
@@ -29,11 +26,15 @@ async function main() {
   const TreasuryFactory = await ethers.getContractFactory("TreasuryNative");
   const treasury = TreasuryFactory.attach(treasuryAddress) as TreasuryNative;
 
+  const FaucetVaultFactory = await ethers.getContractFactory("FaucetVault");
+  const faucetVault = FaucetVaultFactory.attach(faucetVaultAddress) as FaucetVault;
+
   const RevenueVaultFactory = await ethers.getContractFactory("RevenueVault");
   const revenueVault = RevenueVaultFactory.attach(revenueVaultAddress) as RevenueVault;
 
   const contentOwner = await content.owner();
   const treasuryOwner = await treasury.owner();
+  const faucetVaultOwner = await faucetVault.owner();
   const revenueVaultOwner = await revenueVault.owner();
 
   if (contentOwner.toLowerCase() === timelockAddress.toLowerCase()) {
@@ -41,6 +42,9 @@ async function main() {
   }
   if (treasuryOwner.toLowerCase() === timelockAddress.toLowerCase()) {
     throw new Error("Treasury owner is already the Timelock; run this script before handover");
+  }
+  if (faucetVaultOwner.toLowerCase() === timelockAddress.toLowerCase()) {
+    throw new Error("FaucetVault owner is already the Timelock; run this script before handover");
   }
   if (revenueVaultOwner.toLowerCase() === timelockAddress.toLowerCase()) {
     throw new Error("RevenueVault owner is already the Timelock; run this script before handover");
@@ -51,6 +55,9 @@ async function main() {
   }
   if (treasuryOwner.toLowerCase() !== deployer.address.toLowerCase()) {
     throw new Error(`Current signer is not the Treasury owner (${treasuryOwner})`);
+  }
+  if (faucetVaultOwner.toLowerCase() !== deployer.address.toLowerCase()) {
+    throw new Error(`Current signer is not the FaucetVault owner (${faucetVaultOwner})`);
   }
   if (revenueVaultOwner.toLowerCase() !== deployer.address.toLowerCase()) {
     throw new Error(`Current signer is not the RevenueVault owner (${revenueVaultOwner})`);
@@ -69,15 +76,30 @@ async function main() {
   }
 
   const faucetTargetBalance = ethers.parseEther("50");
-  const faucetBalance = await ethers.provider.getBalance(faucetWallet);
+  const faucetBalance = await ethers.provider.getBalance(faucetVaultAddress);
   if (faucetBalance < faucetTargetBalance) {
     const required = faucetTargetBalance - faucetBalance;
     const fundFaucetTx = await deployer.sendTransaction({
-      to: faucetWallet,
+      to: faucetVaultAddress,
       value: required,
     });
     await fundFaucetTx.wait();
-    console.log("Faucet topped up:", fundFaucetTx.hash);
+    console.log("FaucetVault topped up:", fundFaucetTx.hash);
+  }
+
+  const currentFaucetWallet = await revenueVault.faucetWallet();
+  if (currentFaucetWallet.toLowerCase() !== faucetVaultAddress.toLowerCase()) {
+    const currentShareBps = await revenueVault.faucetShareBps();
+    const currentMinFaucetPayout = await revenueVault.minFaucetPayout();
+    const currentAutoFaucetEnabled = await revenueVault.autoFaucetEnabled();
+    const setFaucetConfigTx = await revenueVault.setFaucetConfig(
+      faucetVaultAddress,
+      currentShareBps,
+      currentMinFaucetPayout,
+      currentAutoFaucetEnabled
+    );
+    await setFaucetConfigTx.wait();
+    console.log("RevenueVault faucet wallet updated:", setFaucetConfigTx.hash);
   }
 
   const minStakeToVote = ethers.parseEther("1");

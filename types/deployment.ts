@@ -8,6 +8,7 @@ export interface DeploymentInfo {
     NativeVotes: string;
     KnowledgeContent: string;
     TreasuryNative: string;
+    FaucetVault: string;
     RevenueVault: string;
     TimelockController: string;
     KnowledgeGovernor: string;
