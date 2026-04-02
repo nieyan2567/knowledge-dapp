@@ -1,20 +1,19 @@
 import { ethers } from "hardhat";
 import { loadDeployment } from "./utils/deployments";
 import {
+  FaucetVault,
   KnowledgeContent,
-  TimelockController,
   KnowledgeGovernor,
   NativeVotes,
   RevenueVault,
+  TimelockController,
   TreasuryNative,
 } from "../typechain-types";
 
 async function assertHasCode(label: string, addr: string) {
   const code = await ethers.provider.getCode(addr);
   if (!code || code === "0x") {
-    throw new Error(
-      `${label} 在 ${addr} 处没有合约代码（可能未部署、链已重置，或地址错误）`
-    );
+    throw new Error(`${label} 在 ${addr} 处没有合约代码，可能未部署、链已重置或地址错误`);
   }
   console.log(`   正常 ${label} 已部署合约代码（长度=${code.length}）`);
 }
@@ -42,6 +41,7 @@ async function main() {
   await assertHasCode("NativeVotes", info.contracts.NativeVotes);
   await assertHasCode("KnowledgeContent", info.contracts.KnowledgeContent);
   await assertHasCode("TreasuryNative", info.contracts.TreasuryNative);
+  await assertHasCode("FaucetVault", info.contracts.FaucetVault);
   await assertHasCode("RevenueVault", info.contracts.RevenueVault);
   await assertHasCode("TimelockController", info.contracts.TimelockController);
   await assertHasCode("KnowledgeGovernor", info.contracts.KnowledgeGovernor);
@@ -52,6 +52,8 @@ async function main() {
     .attach(info.contracts.KnowledgeContent)) as KnowledgeContent;
   const treasury = (await (await ethers.getContractFactory("TreasuryNative"))
     .attach(info.contracts.TreasuryNative)) as TreasuryNative;
+  const faucetVault = (await (await ethers.getContractFactory("FaucetVault"))
+    .attach(info.contracts.FaucetVault)) as FaucetVault;
   const revenueVault = (await (await ethers.getContractFactory("RevenueVault"))
     .attach(info.contracts.RevenueVault)) as RevenueVault;
   const timelock = (await (await ethers.getContractFactory("TimelockController"))
@@ -67,11 +69,16 @@ async function main() {
   console.log("   KnowledgeContent.updateContent():", hasFunction(content, "updateContent"));
   console.log("   KnowledgeContent.deleteContent():", hasFunction(content, "deleteContent"));
   console.log("   KnowledgeContent.setContentPolicy():", hasFunction(content, "setContentPolicy"));
+  console.log("   KnowledgeContent.setContentFees():", hasFunction(content, "setContentFees"));
   console.log("   KnowledgeContent.contentVersionCount():", hasFunction(content, "contentVersionCount"));
   console.log("   KnowledgeContent.getContentVersion():", hasFunction(content, "getContentVersion"));
   console.log("   TreasuryNative.totalPendingRewards():", hasFunction(treasury, "totalPendingRewards"));
+  console.log("   FaucetVault.setSigner():", hasFunction(faucetVault, "setSigner"));
+  console.log("   FaucetVault.setClaimConfig():", hasFunction(faucetVault, "setClaimConfig"));
+  console.log("   FaucetVault.setBudgetConfig():", hasFunction(faucetVault, "setBudgetConfig"));
+  console.log("   FaucetVault.availableBudget():", hasFunction(faucetVault, "availableBudget"));
+  console.log("   FaucetVault.canClaim():", hasFunction(faucetVault, "canClaim"));
   console.log("   RevenueVault.needsRefill():", hasFunction(revenueVault, "needsRefill"));
-  console.log("   RevenueVault.refillTreasuryIfNeeded():", hasFunction(revenueVault, "refillTreasuryIfNeeded"));
   console.log("   RevenueVault.rebalance():", hasFunction(revenueVault, "rebalance"));
   console.log("   RevenueVault.releaseFaucetIfNeeded():", hasFunction(revenueVault, "releaseFaucetIfNeeded"));
   console.log("   Governor.timelock():", await governor.timelock());
@@ -86,6 +93,8 @@ async function main() {
   const editLockVotes = await content.editLockVotes();
   const allowDeleteAfterVote = await content.allowDeleteAfterVote();
   const maxVersionsPerContent = await content.maxVersionsPerContent();
+  const registerFee = await content.registerFee();
+  const updateFee = await content.updateFee();
   const contentTreasury = await content.treasury();
   const contentPaused = await content.paused();
   const contentCount = await content.contentCount();
@@ -96,32 +105,34 @@ async function main() {
   console.log("   是否暂停:", contentPaused);
   console.log("   VotesContract:", votesContract);
   console.log("   最低投票质押:", ethers.formatEther(minStakeToVote), "KC");
-  console.log("   获得奖励的最少票数:", minVotesToReward.toString());
-  console.log("   每票奖励:", ethers.formatEther(rewardPerVote), "KC");
+  console.log("   最少获奖票数:", minVotesToReward.toString());
+  console.log("   单票奖励:", ethers.formatEther(rewardPerVote), "KC");
   console.log("   编辑锁定票数:", editLockVotes.toString());
   console.log("   投票后是否允许删除:", allowDeleteAfterVote);
   console.log("   单条内容最大版本数:", maxVersionsPerContent.toString());
-  console.log("   绑定的 Treasury:", contentTreasury);
+  console.log("   发布费用:", ethers.formatEther(registerFee), "KC");
+  console.log("   更新费用:", ethers.formatEther(updateFee), "KC");
+  console.log("   绑定 Treasury:", contentTreasury);
   console.log("   内容总数:", contentCount.toString());
   console.log("   合约余额:", ethers.formatEther(contentBal), "KC");
 
   if (contentCount > 0n) {
     const latest = await content.contents(contentCount);
     const versionCount = await content.contentVersionCount(contentCount);
-    console.log("   最新内容.id:", latest.id.toString());
-    console.log("   最新内容.author:", latest.author);
-    console.log("   最新内容.voteCount:", latest.voteCount.toString());
-    console.log("   最新内容.rewardAccrued:", latest.rewardAccrued);
-    console.log("   最新内容.deleted:", latest.deleted);
-    console.log("   最新内容.latestVersion:", latest.latestVersion.toString());
-    console.log("   最新内容.lastUpdatedAt:", latest.lastUpdatedAt.toString());
-    console.log("   最新内容.versionCount:", versionCount.toString());
+    console.log("   最新内容 id:", latest.id.toString());
+    console.log("   最新内容 author:", latest.author);
+    console.log("   最新内容 voteCount:", latest.voteCount.toString());
+    console.log("   最新内容 rewardAccrued:", latest.rewardAccrued);
+    console.log("   最新内容 deleted:", latest.deleted);
+    console.log("   最新内容 latestVersion:", latest.latestVersion.toString());
+    console.log("   最新内容 lastUpdatedAt:", latest.lastUpdatedAt.toString());
+    console.log("   最新内容 versionCount:", versionCount.toString());
 
     if (versionCount > 0n) {
       const version = await content.getContentVersion(contentCount, versionCount);
-      console.log("   最新版本.ipfsHash:", version[0]);
-      console.log("   最新版本.title:", version[1]);
-      console.log("   最新版本.timestamp:", version[3].toString());
+      console.log("   最新版本 ipfsHash:", version[0]);
+      console.log("   最新版本 title:", version[1]);
+      console.log("   最新版本 timestamp:", version[3].toString());
     }
   }
 
@@ -151,13 +162,41 @@ async function main() {
   console.log("   待领取奖励（deployer）:", ethers.formatEther(pendingDeployer), "KC");
   console.log("   当前余额是否覆盖待领取奖励:", treasuryCoversPending);
 
+  console.log("\nFaucetVault 状态");
+  const faucetOwner = await faucetVault.owner();
+  const faucetPaused = await faucetVault.paused();
+  const faucetSigner = await faucetVault.signer();
+  const faucetBal = await ethers.provider.getBalance(info.contracts.FaucetVault);
+  const faucetClaimAmount = await faucetVault.claimAmount();
+  const faucetMinAllowedBalance = await faucetVault.minAllowedBalance();
+  const faucetClaimCooldown = await faucetVault.claimCooldown();
+  const faucetEpochDuration = await faucetVault.epochDuration();
+  const faucetEpochBudget = await faucetVault.epochBudget();
+  const faucetEpochSpent = await faucetVault.epochSpent();
+  const faucetEpochStartAt = await faucetVault.epochStartAt();
+  const faucetAvailableBudget = await faucetVault.availableBudget();
+
+  console.log("   合约地址:", info.contracts.FaucetVault);
+  console.log("   Owner:", faucetOwner);
+  console.log("   是否暂停:", faucetPaused);
+  console.log("   signer:", faucetSigner);
+  console.log("   合约余额:", ethers.formatEther(faucetBal), "KC");
+  console.log("   单次领取额:", ethers.formatEther(faucetClaimAmount), "KC");
+  console.log("   余额门槛:", ethers.formatEther(faucetMinAllowedBalance), "KC");
+  console.log("   领取冷却:", faucetClaimCooldown.toString(), "秒");
+  console.log("   预算周期:", faucetEpochDuration.toString(), "秒");
+  console.log("   周期预算:", ethers.formatEther(faucetEpochBudget), "KC");
+  console.log("   当前周期已发放:", ethers.formatEther(faucetEpochSpent), "KC");
+  console.log("   当前周期开始时间:", faucetEpochStartAt.toString());
+  console.log("   当前可用预算:", ethers.formatEther(faucetAvailableBudget), "KC");
+
   console.log("\nRevenueVault 状态");
   const revenueVaultOwner = await revenueVault.owner();
   const revenueVaultBal = await ethers.provider.getBalance(info.contracts.RevenueVault);
   const revenueVaultPaused = await revenueVault.paused();
   const revenueVaultTreasury = await revenueVault.treasury();
   const faucetWallet = await revenueVault.faucetWallet();
-  const faucetBalance = await ethers.provider.getBalance(faucetWallet);
+  const faucetWalletBalance = await ethers.provider.getBalance(faucetWallet);
   const faucetShareBps = await revenueVault.faucetShareBps();
   const faucetPending = await revenueVault.faucetPending();
   const minFaucetPayout = await revenueVault.minFaucetPayout();
@@ -176,24 +215,24 @@ async function main() {
   console.log("   合约地址:", info.contracts.RevenueVault);
   console.log("   Owner:", revenueVaultOwner);
   console.log("   是否暂停:", revenueVaultPaused);
-  console.log("   绑定的 Treasury:", revenueVaultTreasury);
-  console.log("   Faucet 钱包:", faucetWallet);
-  console.log("   Faucet 余额:", ethers.formatEther(faucetBalance), "KC");
+  console.log("   绑定 Treasury:", revenueVaultTreasury);
+  console.log("   Faucet 目标地址:", faucetWallet);
+  console.log("   Faucet 当前余额:", ethers.formatEther(faucetWalletBalance), "KC");
   console.log("   Faucet 分成基点:", faucetShareBps.toString());
   console.log("   Faucet 待发放金额:", ethers.formatEther(faucetPending), "KC");
   console.log("   Faucet 最小发放金额:", ethers.formatEther(minFaucetPayout), "KC");
-  console.log("   余额:", ethers.formatEther(revenueVaultBal), "KC");
-  console.log("   触发回填阈值:", ethers.formatEther(refillThreshold), "KC");
+  console.log("   合约余额:", ethers.formatEther(revenueVaultBal), "KC");
+  console.log("   回填阈值:", ethers.formatEther(refillThreshold), "KC");
   console.log("   Treasury 目标余额:", ethers.formatEther(targetTreasuryBalance), "KC");
   console.log("   最小回填金额:", ethers.formatEther(minRefillAmount), "KC");
   console.log("   回填冷却期:", refillCooldown.toString(), "秒");
   console.log("   上次回填时间:", lastRefillAt.toString());
   console.log("   是否启用自动回填:", autoRefillEnabled);
   console.log("   是否启用自动 Faucet:", autoFaucetEnabled);
-  console.log("   是否需要发放 Faucet:", needsFaucetPayout);
-  console.log("   是否需要回填:", needsRefill);
-  console.log("   可用于 Treasury 的金额:", ethers.formatEther(availableForTreasury), "KC");
-  console.log("   最大回填金额:", ethers.formatEther(maxRefillAmount), "KC");
+  console.log("   当前是否需要发放 Faucet:", needsFaucetPayout);
+  console.log("   当前是否需要补充 Treasury:", needsRefill);
+  console.log("   可供 Treasury 使用金额:", ethers.formatEther(availableForTreasury), "KC");
+  console.log("   当前最大可回填金额:", ethers.formatEther(maxRefillAmount), "KC");
 
   console.log("\nTimelock 状态");
   const PROPOSER_ROLE = await timelock.PROPOSER_ROLE();
@@ -230,6 +269,7 @@ async function main() {
   console.log("   投票周期:", (await governor.votingPeriod()).toString(), "个区块");
   console.log("   延迟法定人数扩展:", (await governor.lateQuorumVoteExtension()).toString(), "个区块");
   console.log("   提案门槛:", ethers.formatEther(await governor.proposalThreshold()), "KC");
+  console.log("   提案费用:", ethers.formatEther(await governor.proposalFee()), "KC");
   console.log("   最新区块的法定人数:", (await governor.quorum((await ethers.provider.getBlockNumber()) - 1)).toString());
 
   console.log("\n安全检查汇总");
@@ -237,60 +277,42 @@ async function main() {
   const nativeVotesOwnerIsTimelock = eqAddr(nativeVotesOwner, info.contracts.TimelockController);
   const contentOwnerIsTimelock = eqAddr(contentOwner, info.contracts.TimelockController);
   const treasuryOwnerIsTimelock = eqAddr(treasuryOwner, info.contracts.TimelockController);
+  const faucetOwnerIsTimelock = eqAddr(faucetOwner, info.contracts.TimelockController);
   const revenueVaultOwnerIsTimelock = eqAddr(revenueVaultOwner, info.contracts.TimelockController);
   const contentTreasuryIsTreasury = eqAddr(contentTreasury, info.contracts.TreasuryNative);
-  const revenueVaultTreasuryIsTreasury = eqAddr(
-    revenueVaultTreasury,
-    info.contracts.TreasuryNative
-  );
+  const revenueVaultTreasuryIsTreasury = eqAddr(revenueVaultTreasury, info.contracts.TreasuryNative);
+  const revenueVaultFaucetIsFaucetVault = eqAddr(faucetWallet, info.contracts.FaucetVault);
   const govTimelockOk = eqAddr(govTimelock, info.contracts.TimelockController);
+  const faucetSignerConfigured = !eqAddr(faucetSigner, ethers.ZeroAddress);
 
   console.log("   NativeVotes owner 是否为 Timelock:", nativeVotesOwnerIsTimelock);
   console.log("   Content owner 是否为 Timelock:", contentOwnerIsTimelock);
   console.log("   Treasury owner 是否为 Timelock:", treasuryOwnerIsTimelock);
+  console.log("   FaucetVault owner 是否为 Timelock:", faucetOwnerIsTimelock);
   console.log("   RevenueVault owner 是否为 Timelock:", revenueVaultOwnerIsTimelock);
   console.log("   Content.treasury 是否为 TreasuryNative:", contentTreasuryIsTreasury);
   console.log("   RevenueVault.treasury 是否为 TreasuryNative:", revenueVaultTreasuryIsTreasury);
+  console.log("   RevenueVault.faucetWallet 是否为 FaucetVault:", revenueVaultFaucetIsFaucetVault);
   console.log("   Treasury 是否已授权 Content 为 spender:", spenderOk);
   console.log("   Governor.timelock 是否为 TimelockController:", govTimelockOk);
-  console.log("   Treasury 余额是否大于等于预留奖励:", treasuryCoversPending);
+  console.log("   Faucet signer 是否已配置:", faucetSignerConfigured);
+  console.log("   Treasury 余额是否大于等于待领取奖励:", treasuryCoversPending);
 
-  if (!nativeVotesOwnerIsTimelock) {
-    console.log("   警告 NativeVotes owner 不是 Timelock。");
-  }
-  if (!contentOwnerIsTimelock) {
-    console.log("   警告 Content owner 不是 Timelock。");
-  }
-  if (!treasuryOwnerIsTimelock) {
-    console.log("   警告 Treasury owner 不是 Timelock。");
-  }
-  if (!revenueVaultOwnerIsTimelock) {
-    console.log("   警告 RevenueVault owner 不是 Timelock。");
-  }
-  if (!contentTreasuryIsTreasury) {
-    console.log("   警告 KnowledgeContent 绑定到了错误的 Treasury。");
-  }
-  if (!revenueVaultTreasuryIsTreasury) {
-    console.log("   警告 RevenueVault 绑定到了错误的 Treasury。");
-  }
-  if (!spenderOk) {
-    console.log("   警告 Treasury 尚未授权 KnowledgeContent 作为 spender。");
-  }
-  if (isDeployerAdmin) {
-    console.log("   警告 Deployer 仍然持有 Timelock admin 权限。");
-  }
-  if (isDeployerCanceller) {
-    console.log("   警告 Deployer 仍然持有 Canceller 权限。");
-  }
-  if (!openExecutor) {
-    console.log("   警告 Timelock executor 角色当前不是开放状态。");
-  }
-  if (!govTimelockOk) {
-    console.log("   警告 Governor 的 timelock 与部署信息不一致。");
-  }
-  if (!treasuryCoversPending) {
-    console.log("   警告 Treasury 余额不足以覆盖预留奖励。");
-  }
+  if (!nativeVotesOwnerIsTimelock) console.log("   警告 NativeVotes owner 不是 Timelock");
+  if (!contentOwnerIsTimelock) console.log("   警告 KnowledgeContent owner 不是 Timelock");
+  if (!treasuryOwnerIsTimelock) console.log("   警告 TreasuryNative owner 不是 Timelock");
+  if (!faucetOwnerIsTimelock) console.log("   警告 FaucetVault owner 不是 Timelock");
+  if (!revenueVaultOwnerIsTimelock) console.log("   警告 RevenueVault owner 不是 Timelock");
+  if (!contentTreasuryIsTreasury) console.log("   警告 KnowledgeContent.treasury 指向错误");
+  if (!revenueVaultTreasuryIsTreasury) console.log("   警告 RevenueVault.treasury 指向错误");
+  if (!revenueVaultFaucetIsFaucetVault) console.log("   警告 RevenueVault.faucetWallet 不是 FaucetVault");
+  if (!spenderOk) console.log("   警告 Treasury 尚未授权 KnowledgeContent 为 spender");
+  if (isDeployerAdmin) console.log("   警告 Deployer 仍持有 Timelock admin 权限");
+  if (isDeployerCanceller) console.log("   警告 Deployer 仍持有 Canceller 权限");
+  if (!openExecutor) console.log("   警告 Timelock executor 当前不是开放状态");
+  if (!govTimelockOk) console.log("   警告 Governor.timelock 与部署信息不一致");
+  if (!faucetSignerConfigured) console.log("   警告 Faucet signer 尚未配置");
+  if (!treasuryCoversPending) console.log("   警告 Treasury 余额不足以覆盖待领取奖励");
 
   console.log("\n系统检查完成。");
 }
